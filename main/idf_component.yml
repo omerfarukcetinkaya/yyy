@@ -1,0 +1,10 @@
+## idf_component.yml
+## Component Manager dependencies for s3_vision_hub.
+## Run `idf.py build` — the component manager fetches these automatically.
+
+dependencies:
+  # ESP32 camera driver (OV3660, OV2640, etc.)
+  espressif/esp32-camera:
+    version: ">=2.0.11"
+  # Managed components from IDF registry
+  idf: ">=5.0.0"

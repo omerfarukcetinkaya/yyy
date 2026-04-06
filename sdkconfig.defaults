@@ -1,0 +1,99 @@
+# sdkconfig.defaults — ESP32-S3 N16R8 / s3_vision_hub
+# Applied automatically by idf.py if no sdkconfig exists.
+# Settings here override ESP-IDF defaults for this target.
+
+# ── Target ────────────────────────────────────────────────────────────────────
+CONFIG_IDF_TARGET="esp32s3"
+
+# ── CPU ───────────────────────────────────────────────────────────────────────
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_FREERTOS_HZ=1000
+
+# ── PSRAM (Octal, 8 MB, 80 MHz) ───────────────────────────────────────────────
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=8192
+CONFIG_SPIRAM_IGNORE_NOTFOUND=n
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# ── Flash ─────────────────────────────────────────────────────────────────────
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ── FreeRTOS ──────────────────────────────────────────────────────────────────
+CONFIG_FREERTOS_UNICORE=n
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+# Use esp_timer (1 MHz, µs) for runtime stats.
+# CPU_CLK mode returns total_runtime=0 in ESP-IDF v5 SMP — unusable for delta%.
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+
+# ── Wi-Fi ─────────────────────────────────────────────────────────────────────
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
+
+# ── Networking ────────────────────────────────────────────────────────────────
+# max_open_sockets (13) + 1 listening socket = 14 needed.
+# Default LWIP_MAX_SOCKETS=10 → httpd_start() silently fails. Set to 16.
+CONFIG_LWIP_MAX_SOCKETS=16
+# 128 KB send buffer: one full VGA JPEG frame (50-90 KB) fits in one shot.
+# Without this, a 90 KB frame requires 2 send() calls; if the second blocks
+# (phone's window full), the stream freezes until SO_SNDTIMEO fires.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=131072
+CONFIG_LWIP_TCP_WND_DEFAULT=131072
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=6
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=32
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=4096
+
+# ── HTTP Server ───────────────────────────────────────────────────────────────
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+CONFIG_HTTPD_ERR_RESP_NO_DELAY=y
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# ── Watchdog ──────────────────────────────────────────────────────────────────
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# ── NVS ───────────────────────────────────────────────────────────────────────
+CONFIG_NVS_ASSERT_ERROR_CHECK=n
+
+# ── Wi-Fi credentials ─────────────────────────────────────────────────────────
+CONFIG_VH_WIFI_SSID="localhost-ofc-dev0"
+CONFIG_VH_WIFI_PASSWORD="1994Far.?!1994Far.?!"
+
+# ── Camera ────────────────────────────────────────────────────────────────────
+# Frame size 7 = VGA (640x480). HD(10) = 1280x720 requires 180KB DMA buffer
+# and ~3MB/s WiFi — neither is achievable. VGA at quality 20 fits in 96KB.
+CONFIG_VH_CAM_FRAME_SIZE=7
+CONFIG_OV3660_SUPPORT=y
+# Pin camera DMA task to Core 1 (same as stream_task, motion_detect).
+# Core 0 must remain free for WiFi/LWIP/httpd — they share bus with camera GDMA.
+CONFIG_CAMERA_CORE1=y
+# VGA (640×480) quality=25 for MJPEG streaming.
+# At PCLK=10 MHz hardware produces ~10 fps. JPEG ~50-80 KB/frame.
+# 10fps × 70KB = 700KB/s = 5.6 Mbps — within ESP32-S3 Wi-Fi TCP throughput.
+CONFIG_VH_CAM_JPEG_QUALITY=25
+# 2 frame buffers for CAMERA_GRAB_LATEST. 2 × 128KB = 256KB PSRAM.
+CONFIG_VH_CAM_FB_COUNT=2
+
+# ── Camera JPEG DMA buffer ─────────────────────────────────────────────────────
+# VGA quality=25 JPEG = 50-90 KB. 128 KB covers worst-case.
+# 2 × 128 KB = 256 KB total PSRAM for camera buffers.
+CONFIG_CAMERA_JPEG_MODE_FRAME_SIZE_CUSTOM=y
+CONFIG_CAMERA_JPEG_MODE_FRAME_SIZE=131072
+
+# ── SPI (W25Q64 external flash) ───────────────────────────────────────────────
+CONFIG_SPI_MASTER_IN_IRAM=y

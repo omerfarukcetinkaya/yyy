@@ -1,0 +1,133 @@
+menu "S3 Vision Hub Configuration"
+
+    menu "Wi-Fi"
+        config VH_WIFI_SSID
+            string "Wi-Fi SSID"
+            default "mywifi"
+            help
+                SSID of the Wi-Fi network to connect to.
+
+        config VH_WIFI_PASSWORD
+            string "Wi-Fi Password"
+            default "mypassword"
+            help
+                Password for the Wi-Fi network.
+
+        config VH_WIFI_RECONNECT_DELAY_MS
+            int "Reconnect delay (ms)"
+            default 3000
+            range 500 30000
+            help
+                Delay between Wi-Fi reconnection attempts.
+
+        config VH_WIFI_MAX_RETRY
+            int "Max reconnect retries before reboot"
+            default 20
+            range 5 100
+    endmenu
+
+    menu "Camera"
+        config VH_CAM_FRAME_SIZE
+            int "Camera frame size (FRAMESIZE_* enum value)"
+            default 7
+            help
+                Actual FRAMESIZE enum (espressif__esp32-camera):
+                4=QVGA(320x240), 5=CIF(400x296), 6=HVGA(480x320),
+                7=VGA(640x480), 8=SVGA(800x600), 9=XGA(1024x768),
+                10=HD(1280x720), 11=SXGA(1280x1024), 12=UXGA(1600x1200).
+                Default 7 = VGA 640x480. Best for 15+ fps WiFi streaming.
+                HD (10) needs ~180KB DMA buffer and ~3MB/s WiFi — not suitable.
+
+        config VH_CAM_JPEG_QUALITY
+            int "JPEG quality (0=best/largest, 63=worst/smallest)"
+            default 20
+            range 0 63
+
+        config VH_CAM_FB_COUNT
+            int "Camera frame buffer count (in PSRAM)"
+            default 3
+            range 2 6
+    endmenu
+
+    menu "Web / Authentication"
+        comment "DEV CREDENTIALS - replace before any production deployment"
+
+        config VH_WEB_USERNAME
+            string "Admin panel username"
+            default "tenten"
+
+        config VH_WEB_PASSWORD
+            string "Admin panel password"
+            default "1234"
+
+        config VH_WEB_PORT
+            int "HTTP server port"
+            default 80
+            range 1 65535
+    endmenu
+
+    menu "Telegram Alerts"
+        config VH_TELEGRAM_ENABLED
+            bool "Enable Telegram alert transport"
+            default n
+
+        config VH_TELEGRAM_BOT_TOKEN
+            string "Telegram bot token"
+            default ""
+            depends on VH_TELEGRAM_ENABLED
+            help
+                Bot token from @BotFather.
+
+        config VH_TELEGRAM_CHAT_ID
+            string "Telegram chat ID"
+            default ""
+            depends on VH_TELEGRAM_ENABLED
+    endmenu
+
+    menu "Alarm Thresholds"
+        config VH_ALARM_TEMP_HIGH_C
+            int "High temperature alarm threshold (deg C)"
+            default 60
+            range 30 120
+
+        config VH_ALARM_CO_HIGH_PPM
+            int "High CO alarm threshold (ppm)"
+            default 50
+            range 10 500
+
+        config VH_ALARM_COOLDOWN_S
+            int "Alarm cooldown period (seconds)"
+            default 60
+            range 10 3600
+    endmenu
+
+    menu "Sensor"
+        config VH_SENSOR_POLL_MS
+            int "Sensor poll interval (ms)"
+            default 1000
+            range 100 60000
+    endmenu
+
+    menu "MQ Gas Sensor Calibration"
+        config VH_MQ7_R0_KOHM_X10
+            int "MQ7 R0 resistance x10 (kOhm*10, e.g. 100 = 10.0 kOhm)"
+            default 100
+            range 10 1000
+            help
+                Sensor resistance in clean air. Calibrate by measuring Rs
+                after 24h warm-up in clean air, then update this value.
+
+        config VH_MQ137_R0_KOHM_X10
+            int "MQ137 R0 resistance x10 (kOhm*10)"
+            default 100
+            range 10 1000
+    endmenu
+
+    menu "BIST Logger"
+        config VH_BIST_LOG_INTERVAL_S
+            int "BIST log interval (seconds)"
+            default 60
+            range 10 3600
+    endmenu
+
+endmenu

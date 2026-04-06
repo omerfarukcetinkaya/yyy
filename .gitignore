@@ -1,0 +1,23 @@
+# ESP-IDF build output
+/build/
+/out/
+
+# Generated sdkconfig (sdkconfig.defaults is tracked, sdkconfig is not)
+/sdkconfig
+
+# Downloaded managed components (re-fetched by idf.py)
+/managed_components/
+
+# Runtime logs
+/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor
+.vscode/
+*.swp
+*.swo
+.DS_Store
