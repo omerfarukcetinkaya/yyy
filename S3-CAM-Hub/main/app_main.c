@@ -1,6 +1,6 @@
 /**
  * @file app_main.c
- * @brief ESP32-S3 Vision Hub — entry point and subsystem orchestration.
+ * @brief yyy Vision Hub — entry point and subsystem orchestration.
  *
  * Boot sequence:
  *   1. NVS + event loop (prerequisites for Wi-Fi)
@@ -8,12 +8,15 @@
  *   3. Watchdog (configures TWDT)
  *   4. Telemetry init (all modules write into it, so init first)
  *   5. Web auth (precompute Base64 token once)
- *   6. Camera pipeline + driver (Core 1 DMA starts here)
- *   7. Vision pipeline tasks (Core 1: motion, classifier)
- *   8. Sensor hub (Core 0)
- *   9. Alarm engine (Core 0)
- *  10. Wi-Fi manager (starts STA, HTTP server auto-starts on IP assignment)
- *  11. Telemetry task (Core 0, reports every 2 seconds)
+ *   6. Wi-Fi manager (starts STA; HTTP server auto-starts on IP event)
+ *      — moved before camera so admin panel is up even if SCCB hangs
+ *   7. Camera pipeline + driver (Core 1 DMA starts here)
+ *   8. Alarm engine (Core 0)
+ *   9. Vision pipeline tasks (Core 1: motion, classifier)
+ *  10. Sensor hub (Core 0)
+ *  11. Ext flash + BIST logger
+ *  12. OLED display
+ *  13. Telemetry task (Core 0, reports every 2 seconds)
  *
  * Core allocation:
  *   Core 0: Wi-Fi stack, HTTP server workers, sensor hub, alarm, telemetry
@@ -154,21 +157,24 @@ void app_main(void)
     /* ── 6. Web auth (precompute once) ──────────────────────────────────── */
     web_auth_init();
 
-    /* ── 7. Camera pipeline state ───────────────────────────────────────── */
+    /* ── 7. Wi-Fi (HTTP server starts automatically on IP event) ─────────
+     * Start Wi-Fi BEFORE camera so the admin panel comes up regardless of
+     * how long camera init takes (SCCB stuck after power cycle can add
+     * 20-30 s to camera init; Wi-Fi runs in parallel on Core 0). */
+    ESP_ERROR_CHECK(wifi_manager_init());
+
+    /* ── 8. Camera pipeline state ───────────────────────────────────────── */
     ESP_ERROR_CHECK(cam_pipeline_init());
 
-    /* ── 8. Camera hardware ─────────────────────────────────────────────── */
+    /* ── 9. Camera hardware ─────────────────────────────────────────────── */
     esp_err_t cam_ret = cam_driver_init();
     if (cam_ret != ESP_OK) {
         ESP_LOGE(TAG, "Camera init failed (%s). Continuing without camera.",
                  esp_err_to_name(cam_ret));
-        /* Count the error in telemetry but do not abort — allows Wi-Fi/telemetry
-           to run so the problem is visible on the admin panel. */
-        extern void telemetry_increment_cam_init_error(void);
-        /* Simple inline update since we don't have a dedicated helper */
+        telemetry_increment_cam_init_error();
     }
 
-    /* ── 9. Alarm engine (Core 0) — init BEFORE vision tasks so mutex exists */
+    /* ── 10. Alarm engine (Core 0) — init BEFORE vision tasks so mutex exists */
     const alert_transport_t *transport = telegram_transport_get();
     ESP_ERROR_CHECK(alarm_engine_init(transport));
     ESP_ERROR_CHECK(alarm_engine_start());
@@ -217,9 +223,6 @@ void app_main(void)
                  esp_err_to_name(oled_ret));
     }
 
-    /* ── 14. Wi-Fi (HTTP server starts automatically on IP event) ────────── */
-    ESP_ERROR_CHECK(wifi_manager_init());
-
     /* ── 15. Telemetry task (Core 0, lowest priority) ───────────────────── */
     BaseType_t telem_ret = xTaskCreatePinnedToCore(
         telemetry_task, "telemetry",
@@ -232,7 +235,7 @@ void app_main(void)
     configASSERT(telem_ret == pdPASS);
 
     ESP_LOGI(TAG, "==============================================");
-    ESP_LOGI(TAG, "  ESP32-S3 Vision Hub — boot complete");
+    ESP_LOGI(TAG, "  yyy Vision Hub — boot complete");
     ESP_LOGI(TAG, "  Board:   ESP32-S3-WROOM N16R8 + OV3660");
     ESP_LOGI(TAG, "  IDF:     %s", IDF_VER);
     ESP_LOGI(TAG, "  HTTP:    port %d (once Wi-Fi connects)", CONFIG_VH_WEB_PORT);

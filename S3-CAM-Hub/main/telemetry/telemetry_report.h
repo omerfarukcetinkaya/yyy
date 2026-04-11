@@ -116,3 +116,4 @@ void telemetry_set_alarm(bool active, uint32_t count, const char *reason,
                          uint32_t tg_sent, uint32_t tg_fail);
 void telemetry_set_stream_clients(uint32_t count);
 void telemetry_refresh_system(void);  /**< Updates heap, uptime, reset_reason */
+void telemetry_increment_cam_init_error(void); /**< Increment err_cam_init counter */

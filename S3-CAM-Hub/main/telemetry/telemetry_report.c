@@ -117,6 +117,13 @@ void telemetry_set_stream_clients(uint32_t count)
     xSemaphoreGive(s_mutex);
 }
 
+void telemetry_increment_cam_init_error(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_telem.err_cam_init++;
+    xSemaphoreGive(s_mutex);
+}
+
 void telemetry_refresh_system(void)
 {
     sysmon_snapshot_t snap;

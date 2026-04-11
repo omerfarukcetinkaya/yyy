@@ -95,7 +95,7 @@ void web_auth_send_challenge(httpd_req_t *req)
 {
     httpd_resp_set_status(req, "401 Unauthorized");
     httpd_resp_set_hdr(req, "WWW-Authenticate",
-                       "Basic realm=\"ESP32-S3 Vision Hub\"");
+                       "Basic realm=\"yyy Vision Hub\"");
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_sendstr(req, "Unauthorized. Provide valid credentials.");
 }

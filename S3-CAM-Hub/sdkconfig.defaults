@@ -42,11 +42,14 @@ CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
 # max_open_sockets (13) + 1 listening socket = 14 needed.
 # Default LWIP_MAX_SOCKETS=10 → httpd_start() silently fails. Set to 16.
 CONFIG_LWIP_MAX_SOCKETS=16
-# 128 KB send buffer: one full VGA JPEG frame (50-90 KB) fits in one shot.
-# Without this, a 90 KB frame requires 2 send() calls; if the second blocks
-# (phone's window full), the stream freezes until SO_SNDTIMEO fires.
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=131072
-CONFIG_LWIP_TCP_WND_DEFAULT=131072
+# 64 KB send buffer: one full JPEG frame (~30-70 KB) fits in a single kernel
+# call. With the default 5760 bytes, httpd_resp_sendstr() blocks mid-response
+# while iOS slowly ACKs — the httpd task freezes, starving all other requests.
+# 65535 is the maximum allowed by the Kconfig range (2440-65535 without
+# WND_SCALE). 131072 exceeds that range and is silently rejected → stays 5760.
+# NOTE: TCP_SNDLOWAT = SND_BUF/2 must fit in u16_t (< 59775); 65535/2=32767 ✓
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
+CONFIG_LWIP_TCP_WND_DEFAULT=65535
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=6
 CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=32
@@ -75,25 +78,30 @@ CONFIG_VH_WIFI_SSID="localhost-ofc-dev0"
 CONFIG_VH_WIFI_PASSWORD="1994Far.?!1994Far.?!"
 
 # ── Camera ────────────────────────────────────────────────────────────────────
-# Frame size 7 = VGA (640x480). HD(10) = 1280x720 requires 180KB DMA buffer
-# and ~3MB/s WiFi — neither is achievable. VGA at quality 20 fits in 96KB.
-CONFIG_VH_CAM_FRAME_SIZE=7
+# framesize_t enum (espressif__esp32-camera sensor.h):
+#   7  = FRAMESIZE_320X320  (320×320)
+#   10 = FRAMESIZE_VGA      (640×480)  ← target
+#   11 = FRAMESIZE_SVGA     (800×600)
+# HD (FRAMESIZE_HD=13, 1280×720) needs >180KB DMA and ~10Mbps — not feasible.
+CONFIG_VH_CAM_FRAME_SIZE=10
 CONFIG_OV3660_SUPPORT=y
 # Pin camera DMA task to Core 1 (same as stream_task, motion_detect).
 # Core 0 must remain free for WiFi/LWIP/httpd — they share bus with camera GDMA.
 CONFIG_CAMERA_CORE1=y
-# VGA (640×480) quality=25 for MJPEG streaming.
-# At PCLK=10 MHz hardware produces ~10 fps. JPEG ~50-80 KB/frame.
-# 10fps × 70KB = 700KB/s = 5.6 Mbps — within ESP32-S3 Wi-Fi TCP throughput.
-CONFIG_VH_CAM_JPEG_QUALITY=25
-# 2 frame buffers for CAMERA_GRAB_LATEST. 2 × 128KB = 256KB PSRAM.
-CONFIG_VH_CAM_FB_COUNT=2
+# VGA (640×480) quality=35 for snapshot polling.
+# At PCLK=10 MHz hardware produces ~25 fps. JPEG ~40-70 KB/frame at quality=35.
+# 10fps × 55KB = 550KB/s = 4.4 Mbps — within ESP32-S3 Wi-Fi TCP throughput.
+CONFIG_VH_CAM_JPEG_QUALITY=35
+# 3 frame buffers for CAMERA_GRAB_WHEN_EMPTY.
+# With 3 buffers: DMA fills 2 while app holds 1 → fb_get() returns immediately.
+# 3 × 160KB = 480KB PSRAM for camera buffers.
+CONFIG_VH_CAM_FB_COUNT=3
 
 # ── Camera JPEG DMA buffer ─────────────────────────────────────────────────────
-# VGA quality=25 JPEG = 50-90 KB. 128 KB covers worst-case.
-# 2 × 128 KB = 256 KB total PSRAM for camera buffers.
+# VGA quality=35 JPEG = 40-70 KB typical, 100 KB worst-case.
+# 160 KB gives comfortable headroom. 3 × 160 KB = 480 KB PSRAM total.
 CONFIG_CAMERA_JPEG_MODE_FRAME_SIZE_CUSTOM=y
-CONFIG_CAMERA_JPEG_MODE_FRAME_SIZE=131072
+CONFIG_CAMERA_JPEG_MODE_FRAME_SIZE=163840
 
 # ── SPI (W25Q64 external flash) ───────────────────────────────────────────────
 CONFIG_SPI_MASTER_IN_IRAM=y

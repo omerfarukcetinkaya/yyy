@@ -58,8 +58,8 @@ esp_err_t http_server_start(void)
      * the HTTP request. The dialog can take minutes to dismiss. Default
      * recv_wait_timeout=5s closes the connection before the request arrives.
      * 60 s keeps the connection alive through the dialog. */
-    cfg.recv_wait_timeout  = 60;  /* seconds, default=5 */
-    cfg.send_wait_timeout  = 30;  /* seconds, default=5 */
+    cfg.recv_wait_timeout  = 60;  /* seconds, default=5 — survives iOS "Reduce Protections" dialog */
+    cfg.send_wait_timeout  = 5;   /* seconds, default=5 — keep at default; 30s was freezing the httpd task */
 
     esp_err_t ret = httpd_start(&s_server, &cfg);
     if (ret != ESP_OK) {

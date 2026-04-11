@@ -1,4 +1,4 @@
-menu "S3 Vision Hub Configuration"
+menu "yyy Vision Hub Configuration"
 
     menu "Wi-Fi"
         config VH_WIFI_SSID

@@ -6,14 +6,14 @@
 #include "cam_config.h"
 #include "ov3660_s3_n16r8.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/i2c_master.h"
+#include "driver/gpio.h"
 #include "driver/ledc.h"
 
 static const char *TAG = "cam_drv";
 static bool s_initialized = false;
-static char s_sccb_scan_result[80] = "scan not run";
 
 esp_err_t cam_driver_init(void)
 {
@@ -60,10 +60,15 @@ esp_err_t cam_driver_init(void)
         .grab_mode     = CAM_GRAB_MODE,
     };
 
-    /* ── SCCB diagnostic scan ────────────────────────────────────────────────
-     * OV3660 requires XCLK to respond on SCCB. Start XCLK first, wait for
-     * sensor stabilization, then scan. This identifies whether GPIO4/5 is
-     * correct or a different pin pair is needed for this board.
+    /* ── XCLK + SCCB bus recovery ───────────────────────────────────────────
+     * OV3660 requires XCLK to respond on SCCB. Start XCLK first, wait 200 ms
+     * for sensor stabilization, then recover the SCCB bus before init.
+     *
+     * SCCB recovery (9 SCL pulses): after a power cycle, a slave device may
+     * hold SDA low mid-transaction. Toggling SCL 9 times and sending a STOP
+     * condition unlocks the bus without requiring the i2c_master API
+     * (which conflicts with esp_camera's internal legacy SCCB driver on the
+     * same I2C_NUM_1 peripheral).
      */
     {
         /* Start XCLK on BOARD_CAM_XCLK_GPIO so OV3660 clocks up */
@@ -90,42 +95,40 @@ esp_err_t cam_driver_init(void)
         /* Wait for sensor to stabilize with XCLK running */
         vTaskDelay(pdMS_TO_TICKS(200));
 
-        /* Scan SCCB bus (configured SIOD/SIOC pins) */
-        i2c_master_bus_config_t scan_bus_cfg = {
-            .i2c_port          = I2C_NUM_1,
-            .sda_io_num        = BOARD_CAM_SIOD_GPIO,
-            .scl_io_num        = BOARD_CAM_SIOC_GPIO,
-            .clk_source        = I2C_CLK_SRC_DEFAULT,
-            .glitch_ignore_cnt = 7,
-            .flags.enable_internal_pullup = true,
+        /* SCCB bus recovery: open-drain GPIOs so we never fight a slave.
+         * Writing 1 = high-Z (pulled up); writing 0 = driven low. */
+        gpio_config_t sccb_io = {
+            .pin_bit_mask = (1ULL << BOARD_CAM_SIOC_GPIO) |
+                            (1ULL << BOARD_CAM_SIOD_GPIO),
+            .mode         = GPIO_MODE_OUTPUT_OD,
+            .pull_up_en   = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
         };
-        i2c_master_bus_handle_t scan_bus;
-        esp_err_t scan_init = i2c_new_master_bus(&scan_bus_cfg, &scan_bus);
-        if (scan_init == ESP_OK) {
-            ESP_LOGI(TAG, "SCCB scan (XCLK on GPIO%d) — SDA=%d SCL=%d:",
-                     BOARD_CAM_XCLK_GPIO, BOARD_CAM_SIOD_GPIO, BOARD_CAM_SIOC_GPIO);
-            int found = 0;
-            for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
-                if (i2c_master_probe(scan_bus, addr, 20) == ESP_OK) {
-                    ESP_LOGI(TAG, "  Device at 0x%02X%s", addr,
-                             addr == 0x3C ? " <- OV3660" : "");
-                    snprintf(s_sccb_scan_result, sizeof(s_sccb_scan_result),
-                             "found 0x%02X on SDA=%d SCL=%d",
-                             addr, BOARD_CAM_SIOD_GPIO, BOARD_CAM_SIOC_GPIO);
-                    found++;
-                }
-            }
-            if (!found) {
-                ESP_LOGW(TAG, "  Nothing on GPIO%d/GPIO%d. SCCB pins are wrong.",
-                         BOARD_CAM_SIOD_GPIO, BOARD_CAM_SIOC_GPIO);
-                snprintf(s_sccb_scan_result, sizeof(s_sccb_scan_result),
-                         "NOTHING on SDA=%d SCL=%d (XCLK running)",
-                         BOARD_CAM_SIOD_GPIO, BOARD_CAM_SIOC_GPIO);
-            }
-            i2c_del_master_bus(scan_bus);
-        } else {
-            ESP_LOGW(TAG, "SCCB scan init failed: %s", esp_err_to_name(scan_init));
+        gpio_config(&sccb_io);
+        gpio_set_level(BOARD_CAM_SIOD_GPIO, 1);   /* release SDA */
+        gpio_set_level(BOARD_CAM_SIOC_GPIO, 1);   /* SCL idle high */
+
+        for (int pulse = 0; pulse < 9; pulse++) {
+            esp_rom_delay_us(10);
+            gpio_set_level(BOARD_CAM_SIOC_GPIO, 0);
+            esp_rom_delay_us(10);
+            gpio_set_level(BOARD_CAM_SIOC_GPIO, 1);
         }
+        /* STOP condition: SDA low → high while SCL is high */
+        gpio_set_level(BOARD_CAM_SIOD_GPIO, 0);
+        esp_rom_delay_us(10);
+        gpio_set_level(BOARD_CAM_SIOC_GPIO, 1);
+        esp_rom_delay_us(10);
+        gpio_set_level(BOARD_CAM_SIOD_GPIO, 1);
+        esp_rom_delay_us(10);
+
+        /* Release pins — esp_camera_init() reconfigures them for SCCB */
+        gpio_reset_pin(BOARD_CAM_SIOC_GPIO);
+        gpio_reset_pin(BOARD_CAM_SIOD_GPIO);
+
+        ESP_LOGI(TAG, "SCCB bus recovery done (9 SCL pulses + STOP, SDA=%d SCL=%d).",
+                 BOARD_CAM_SIOD_GPIO, BOARD_CAM_SIOC_GPIO);
 
         /* XCLK intentionally left running — OV3660 needs >10ms of XCLK before
          * responding to SCCB. esp_camera_init() will reconfigure the same
@@ -136,8 +139,8 @@ esp_err_t cam_driver_init(void)
     esp_err_t ret = esp_camera_init(&cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Camera init failed: %s (0x%x)", esp_err_to_name(ret), ret);
-        ESP_LOGE(TAG, "SCCB diagnostic: %s", s_sccb_scan_result);
-        ESP_LOGE(TAG, "Check: pin mapping in boards/ov3660_s3_n16r8.h");
+        ESP_LOGE(TAG, "Check: pin mapping in boards/ov3660_s3_n16r8.h, XCLK=%d, SDA=%d, SCL=%d",
+                 BOARD_CAM_XCLK_GPIO, BOARD_CAM_SIOD_GPIO, BOARD_CAM_SIOC_GPIO);
         return ret;
     }
 

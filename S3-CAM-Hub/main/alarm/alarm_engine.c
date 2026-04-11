@@ -74,7 +74,7 @@ static void fire_alarm(const char *reason, alert_severity_t sev)
             .severity    = sev,
             .timestamp_us = s_state.last_fire_us,
         };
-        strncpy(msg.title, "S3 Vision Hub Alarm", sizeof(msg.title) - 1);
+        strncpy(msg.title, "yyy Vision Hub Alarm", sizeof(msg.title) - 1);
         snprintf(msg.body, sizeof(msg.body), "%s", reason);
 
         if (s_transport->send(&msg) == ESP_OK) {

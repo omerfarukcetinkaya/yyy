@@ -29,11 +29,14 @@
 #define CAM_FB_COUNT        CONFIG_VH_CAM_FB_COUNT
 
 /* ── Grab mode ────────────────────────────────────────────────────────────────
- * CAMERA_GRAB_LATEST: camera always overwrites the "latest" slot; consumer
- * always gets the freshest frame. With fb_count=2, one buffer is captured
- * while the other is consumed — DMA never stalls even if the stream task is
- * briefly blocked in send(). GRAB_WHEN_EMPTY would stall DMA once all 3
- * buffers fill up while stream_task is blocked on a slow TCP send. */
+ * CAMERA_GRAB_LATEST: DMA runs continuously; cam_task discards stale frames
+ * and keeps only the latest in the queue. fb_get() is non-blocking when the
+ * snapshot cycle (TCP send ~90 ms + client RTT) exceeds the VGA frame period
+ * (40 ms at 25 fps) — the next frame is already queued before fb_get() runs.
+ *
+ * CAMERA_GRAB_WHEN_EMPTY must NOT be used for aperiodic (snapshot polling)
+ * consumers: DMA stops permanently when all buffers are full and no fb_get()
+ * is called. This causes the "frames counter frozen" symptom. */
 #define CAM_GRAB_MODE       CAMERA_GRAB_LATEST
 
 /* ── Pipeline timing ─────────────────────────────────────────────────────── */
