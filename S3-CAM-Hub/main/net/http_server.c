@@ -4,6 +4,7 @@
  */
 #include "http_server.h"
 #include "stream_handler.h"
+#include "ws_stream.h"
 #include "admin_panel.h"
 #include "web_reporter.h"
 #include "esp_log.h"
@@ -83,6 +84,7 @@ esp_err_t http_server_start(void)
 
     /* Register fresh routes from each module */
     stream_handler_register(s_server);
+    ws_stream_register(s_server);
     admin_panel_register(s_server);
     web_reporter_register(s_server);
 

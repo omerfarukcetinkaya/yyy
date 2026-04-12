@@ -10,9 +10,11 @@ idf_component_register(
         # Camera layer
         "cam/cam_driver.c"
         "cam/cam_pipeline.c"
+        "cam/frame_pool.c"
 
         # Vision layer
         "vision/motion_detect.c"
+        "vision/blob_finder.c"
         "vision/roi_tracker.c"
         "vision/classifier.c"
 
@@ -20,6 +22,7 @@ idf_component_register(
         "net/wifi_manager.c"
         "net/http_server.c"
         "net/stream_handler.c"
+        "net/ws_stream.c"
         "net/web_auth.c"
         "net/admin_panel.c"
 

@@ -39,6 +39,7 @@
 /* Camera */
 #include "cam/cam_driver.h"
 #include "cam/cam_pipeline.h"
+#include "cam/frame_pool.h"
 
 /* Vision */
 #include "vision/motion_detect.h"
@@ -50,6 +51,7 @@
 #include "net/web_auth.h"
 #include "net/http_server.h"
 #include "net/stream_handler.h"
+#include "net/ws_stream.h"
 
 /* Sensors */
 #include "sensors/sensor_hub.h"
@@ -114,8 +116,8 @@ static void telemetry_task(void *arg)
                            wifi_manager_get_rssi(),
                            wifi_manager_get_reconnect_count());
 
-        /* Pull stream client count */
-        telemetry_set_stream_clients(stream_handler_get_client_count());
+        /* Pull stream client count (WebSocket broadcaster) */
+        telemetry_set_stream_clients(ws_stream_get_client_count());
 
         /* Print 0.5 Hz UART report */
         telemetry_t snap;
@@ -163,8 +165,9 @@ void app_main(void)
      * 20-30 s to camera init; Wi-Fi runs in parallel on Core 0). */
     ESP_ERROR_CHECK(wifi_manager_init());
 
-    /* ── 8. Camera pipeline state ───────────────────────────────────────── */
+    /* ── 8. Camera pipeline state + frame pool ─────────────────────────── */
     ESP_ERROR_CHECK(cam_pipeline_init());
+    ESP_ERROR_CHECK(frame_pool_init());
 
     /* ── 9. Camera hardware ─────────────────────────────────────────────── */
     esp_err_t cam_ret = cam_driver_init();
@@ -172,6 +175,9 @@ void app_main(void)
         ESP_LOGE(TAG, "Camera init failed (%s). Continuing without camera.",
                  esp_err_to_name(cam_ret));
         telemetry_increment_cam_init_error();
+    } else {
+        /* Start the dedicated cam producer task (Core 1, prio 6). */
+        ESP_ERROR_CHECK(cam_pipeline_start());
     }
 
     /* ── 10. Alarm engine (Core 0) — init BEFORE vision tasks so mutex exists */
@@ -239,7 +245,8 @@ void app_main(void)
     ESP_LOGI(TAG, "  Board:   ESP32-S3-WROOM N16R8 + OV3660");
     ESP_LOGI(TAG, "  IDF:     %s", IDF_VER);
     ESP_LOGI(TAG, "  HTTP:    port %d (once Wi-Fi connects)", CONFIG_VH_WEB_PORT);
-    ESP_LOGI(TAG, "  Stream:  http://<ip>:%d/stream", CONFIG_VH_WEB_PORT);
+    ESP_LOGI(TAG, "  WS:      ws://<ip>:%d/ws/stream", CONFIG_VH_WEB_PORT);
+    ESP_LOGI(TAG, "  Snapshot http://<ip>:%d/snapshot", CONFIG_VH_WEB_PORT);
     ESP_LOGI(TAG, "  Admin:   http://<ip>:%d/", CONFIG_VH_WEB_PORT);
     ESP_LOGI(TAG, "  Telem:   http://<ip>:%d/api/telemetry", CONFIG_VH_WEB_PORT);
     ESP_LOGI(TAG, "==============================================");

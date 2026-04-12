@@ -79,8 +79,12 @@ bool web_auth_check(httpd_req_t *req)
 void web_auth_set_session_cookie(httpd_req_t *req)
 {
     char hdr[96];
+    /* SameSite=Lax (not Strict): iOS Safari drops Strict cookies on the
+     * WebSocket upgrade request, which would 401 /ws/stream. Lax still
+     * protects against cross-site CSRF for mutating requests while
+     * allowing same-origin WS handshakes to carry the session. */
     snprintf(hdr, sizeof(hdr),
-             "sid=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400",
+             "sid=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400",
              s_session_token);
     httpd_resp_set_hdr(req, "Set-Cookie", hdr);
 }
@@ -89,6 +93,22 @@ void web_auth_clear_session_cookie(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Set-Cookie",
                        "sid=; Path=/; HttpOnly; Max-Age=0");
+}
+
+const char *web_auth_get_session_token(void)
+{
+    return s_session_token;
+}
+
+bool web_auth_token_matches(const char *token)
+{
+    if (!s_initialized || !token) return false;
+    /* Constant-time compare to avoid trivial timing leaks. */
+    size_t n = strlen(s_session_token);
+    if (strlen(token) != n) return false;
+    uint8_t diff = 0;
+    for (size_t i = 0; i < n; i++) diff |= token[i] ^ s_session_token[i];
+    return diff == 0;
 }
 
 void web_auth_send_challenge(httpd_req_t *req)

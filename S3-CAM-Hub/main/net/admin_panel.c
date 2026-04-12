@@ -2,12 +2,12 @@
  * @file admin_panel.c
  * @brief Authenticated HTML admin dashboard served from GET /.
  *
- * Stream is loaded on-demand (click to start) to avoid:
- *   - Browser "loading" spinner stuck forever (MJPEG has no Content-Length)
- *   - Unnecessary stream connections when just checking telemetry
- *
- * Session cookie is set on every successful auth so the browser doesn't
- * re-prompt for Basic Auth credentials on subsequent requests.
+ * Pipeline:
+ *   - Session cookie set on each auth pass so browsers don't re-prompt.
+ *   - Live stream is a WebSocket binary push (/ws/stream). Motion
+ *     bounding boxes arrive as text frames and are overlaid on a
+ *     canvas atop the JPEG image element.
+ *   - Telemetry is a separate 2 Hz poll against /api/telemetry.
  */
 #include "admin_panel.h"
 #include "web_auth.h"
@@ -16,8 +16,13 @@
 
 static const char *TAG = "admin";
 
-/* ── Embedded HTML dashboard ─────────────────────────────────────────────── */
-static const char ADMIN_HTML[] =
+/* ── Embedded HTML dashboard ──────────────────────────────────────────────
+ * Split into two halves: ADMIN_HTML_HEAD ends just after the opening
+ * <script> tag, ADMIN_HTML_BODY contains the JS/body/close tags. Between
+ * the two halves, admin_get_handler injects `window.WS_TOKEN='...';`
+ * so the WebSocket URL can authenticate via query parameter — immune
+ * to cookie policy variations on mobile browsers. */
+static const char ADMIN_HTML_HEAD[] =
 "<!DOCTYPE html>"
 "<html lang=\"en\">"
 "<head>"
@@ -30,15 +35,21 @@ static const char ADMIN_HTML[] =
 "h1{color:#69f0ae;margin-bottom:12px;font-size:1.1em;letter-spacing:2px;display:flex;justify-content:space-between;align-items:center}"
 "a.logout{font-size:0.7em;color:#546e7a;text-decoration:none;border:1px solid #546e7a;padding:2px 8px;border-radius:2px}"
 ".grid{display:flex;flex-wrap:wrap;gap:12px}"
-".panel{background:#111;border:1px solid #1b5e20;border-radius:4px;padding:12px;flex:1;min-width:300px}"
+".panel{background:#111;border:1px solid #1b5e20;border-radius:4px;padding:12px;flex:1;min-width:320px}"
 ".panel h2{color:#69f0ae;font-size:0.85em;letter-spacing:1px;margin-bottom:10px;border-bottom:1px solid #1b5e20;padding-bottom:5px}"
-"#stream-box{width:100%;background:#000;border:1px solid #1b5e20;border-radius:2px;min-height:180px;display:flex;align-items:center;justify-content:center}"
-"#stream-box img{width:100%;display:block}"
+"#stream-box{width:100%;background:#000;border:1px solid #1b5e20;border-radius:2px;min-height:180px;position:relative;display:flex;align-items:center;justify-content:center}"
+"#stream-wrap{position:relative;width:100%;line-height:0}"
+"#frame{width:100%;display:block}"
+"#overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}"
 "#play-btn{background:#1b5e20;color:#69f0ae;border:1px solid #69f0ae;padding:10px 24px;cursor:pointer;font-family:inherit;font-size:0.9em;border-radius:2px}"
 "#play-btn:hover{background:#2e7d32}"
+".stream-ctl{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:0.7em;color:#546e7a}"
+".stream-ctl button{background:#1b2020;color:#546e7a;border:1px solid #263238;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:0.72em;border-radius:2px}"
 "pre{font-size:0.72em;line-height:1.55;white-space:pre-wrap;word-break:break-all}"
 ".ok{color:#00e676}.warn{color:#ffeb3b}.alarm{color:#f44336}"
 ".label{color:#4db6ac}.val{color:#e0e0e0}"
+"#motion-list{font-size:0.7em;margin-top:6px;color:#80deea;max-height:120px;overflow:auto}"
+"#motion-list div{padding:2px 0;border-bottom:1px dashed #1b5e20}"
 "#status{font-size:0.65em;color:#546e7a;margin-top:6px}"
 "</style>"
 "</head>"
@@ -52,6 +63,11 @@ static const char ADMIN_HTML[] =
 "    <div id=\"stream-box\">"
 "      <button id=\"play-btn\" onclick=\"startStream()\">&#9654; START STREAM</button>"
 "    </div>"
+"    <div class=\"stream-ctl\">"
+"      <span id=\"stream-stat\">idle</span>"
+"      <button id=\"stop-btn\" onclick=\"stopStream()\" style=\"display:none\">&#9209; STOP</button>"
+"    </div>"
+"    <div id=\"motion-list\"></div>"
 "  </div>"
 "  <div class=\"panel\">"
 "    <h2>TELEMETRY</h2>"
@@ -59,60 +75,120 @@ static const char ADMIN_HTML[] =
 "    <div id=\"status\"></div>"
 "  </div>"
 "</div>"
-"<script>"
+"<script>";
+
+/* Injected between HEAD and BODY at request time:
+ *   window.WS_TOKEN = '<session-token>';
+ */
+
+static const char ADMIN_HTML_BODY[] =
 "(function(){"
 "var el=document.getElementById('telem');"
 "var st=document.getElementById('status');"
-"var streamActive=false;"
-"window.startStream=function(){"
-"  if(streamActive)return;"
-"  streamActive=true;"
-"  var box=document.getElementById('stream-box');"
-"  var img=document.createElement('img');"
-"  img.alt='stream';img.style.cssText='width:100%;display:block';"
-"  var stopBtn=document.createElement('button');"
-"  stopBtn.textContent='\\u23F9 STOP';"
-"  stopBtn.style.cssText='display:block;width:100%;margin-top:4px;"
-"background:#1b2020;color:#546e7a;border:1px solid #263238;"
-"padding:4px;cursor:pointer;font-family:inherit;font-size:0.75em';"
-"  stopBtn.onclick=function(){"
-"    streamActive=false;"
-"    box.innerHTML='<button id=\"play-btn\" onclick=\"startStream()\">"
-"&#9654; START STREAM</button>';"
-"  };"
-"  box.innerHTML='';"
-"  box.appendChild(img);"
-"  box.appendChild(stopBtn);"
-"  var errs=0;"
-"  function fetchNext(){"
-"    if(!streamActive)return;"
-"    var t=new Image();"
-"    t.onload=function(){"
-"      if(!streamActive)return;"
-"      img.src=t.src;"
-"      errs=0;"
-"      st.textContent='';"
-"      fetchNext();"
-"    };"
-"    t.onerror=function(){"
-"      if(!streamActive)return;"
-"      errs++;"
-"      if(errs>8){"
-"        streamActive=false;"
-"        box.innerHTML='<p style=\"color:#f44336;text-align:center;padding:20px\">"
-"Camera unavailable.<br>"
-"<button onclick=\"startStream()\" "
-"style=\"margin-top:8px;background:#1b5e20;color:#69f0ae;"
-"border:1px solid #69f0ae;padding:8px 16px;cursor:pointer;"
-"font-family:inherit;border-radius:2px\">&#9654; RETRY</button></p>';"
-"        return;"
-"      }"
-"      st.textContent='Snap err '+errs+'/8, retry...';"
-"      setTimeout(fetchNext,1500);"
-"    };"
-"    t.src='/snapshot?t='+Date.now();"
+"var strStat=document.getElementById('stream-stat');"
+"var motionList=document.getElementById('motion-list');"
+"var playBtn=document.getElementById('play-btn');"
+"var stopBtn=document.getElementById('stop-btn');"
+"var box=document.getElementById('stream-box');"
+"var ws=null;"
+"var lastMotion=null;"
+"var frameCount=0;"
+"var lastFpsT=Date.now();"
+"var curUrl=null;"
+"var frameEl=null;"
+"var canvasEl=null;"
+"function clearStream(){"
+"  if(ws){try{ws.close();}catch(e){}ws=null;}"
+"  if(curUrl){URL.revokeObjectURL(curUrl);curUrl=null;}"
+"  box.innerHTML='<button id=\"play-btn\" onclick=\"startStream()\">&#9654; START STREAM</button>';"
+"  playBtn=document.getElementById('play-btn');"
+"  stopBtn.style.display='none';"
+"  strStat.textContent='idle';"
+"  motionList.innerHTML='';"
+"  lastMotion=null;"
+"}"
+"window.stopStream=clearStream;"
+"function drawOverlay(){"
+"  if(!canvasEl||!frameEl||!lastMotion)return;"
+"  var w=frameEl.naturalWidth||lastMotion.w||640;"
+"  var h=frameEl.naturalHeight||lastMotion.h||480;"
+"  canvasEl.width=w;canvasEl.height=h;"
+"  var ctx=canvasEl.getContext('2d');"
+"  ctx.clearRect(0,0,w,h);"
+"  var tracks=lastMotion.tracks||[];"
+"  var rows=[];"
+"  for(var i=0;i<tracks.length;i++){"
+"    var t=tracks[i];"
+"    var activeColor=t.lost?'rgba(255,193,7,':'rgba(244,67,54,';"
+"    var alpha=Math.min(1,0.5+t.s*0.5);"
+"    ctx.lineWidth=4;"
+"    ctx.strokeStyle=activeColor+alpha+')';"
+"    ctx.strokeRect(t.x,t.y,t.w,t.h);"
+"    ctx.fillStyle='rgba(0,0,0,0.65)';"
+"    ctx.fillRect(t.x,t.y-20,120,20);"
+"    ctx.fillStyle='#fff';"
+"    ctx.font='bold 13px monospace';"
+"    ctx.fillText('#'+t.id+' h'+t.hits+' a'+t.age,t.x+4,t.y-5);"
+"    rows.push('<div>"
+"<span style=\"color:'+(t.lost?'#ffc107':'#f44336')+'\">#'+t.id+'</span>"
+" box '+t.x+','+t.y+' '+t.w+'x'+t.h+"
+"' score '+t.s.toFixed(3)+' age '+t.age+' hits '+t.hits+(t.lost?' LOST':'')+'</div>');"
 "  }"
-"  fetchNext();"
+"  if(lastMotion.det){"
+"    ctx.fillStyle='rgba(244,67,54,0.9)';"
+"    ctx.fillRect(0,0,150,26);"
+"    ctx.fillStyle='#fff';"
+"    ctx.font='bold 15px monospace';"
+"    ctx.fillText('MOTION x'+tracks.length,6,19);"
+"  }"
+"  motionList.innerHTML="
+"    '<div style=\"color:#69f0ae\">motion fps '+(lastMotion.fps||0)+"
+"    '  score '+((lastMotion.score||0).toFixed(3))+"
+"    '  tracks '+tracks.length+(lastMotion.det?'  <span style=\\'color:#f44336\\'>ALARM</span>':'')+'</div>'"
+"    +rows.join('');"
+"}"
+"window.startStream=function(){"
+"  if(ws)return;"
+"  box.innerHTML="
+"    '<div id=\"stream-wrap\">"
+"       <img id=\"frame\" alt=\"stream\">"
+"       <canvas id=\"overlay\"></canvas>"
+"     </div>';"
+"  frameEl=document.getElementById('frame');"
+"  canvasEl=document.getElementById('overlay');"
+"  stopBtn.style.display='inline-block';"
+"  strStat.textContent='connecting...';"
+"  var proto=location.protocol==='https:'?'wss:':'ws:';"
+"  try{"
+"    ws=new WebSocket(proto+'//'+location.host+'/ws/stream?token='+window.WS_TOKEN);"
+"    ws.binaryType='blob';"
+"  }catch(e){strStat.textContent='ws err '+e;return;}"
+"  ws.onopen=function(){strStat.textContent='live';frameCount=0;lastFpsT=Date.now();};"
+"  ws.onmessage=function(ev){"
+"    if(typeof ev.data==='string'){"
+"      try{lastMotion=JSON.parse(ev.data);drawOverlay();}catch(e){}"
+"      return;"
+"    }"
+"    var prevUrl=curUrl;"
+"    curUrl=URL.createObjectURL(ev.data);"
+"    frameEl.onload=function(){"
+"      if(prevUrl)URL.revokeObjectURL(prevUrl);"
+"      drawOverlay();"
+"    };"
+"    frameEl.src=curUrl;"
+"    frameCount++;"
+"    var now=Date.now();"
+"    if(now-lastFpsT>1000){"
+"      var fps=(frameCount*1000/(now-lastFpsT)).toFixed(1);"
+"      strStat.textContent='live · '+fps+' fps';"
+"      frameCount=0;lastFpsT=now;"
+"    }"
+"  };"
+"  ws.onerror=function(){strStat.textContent='ws error';};"
+"  ws.onclose=function(){"
+"    strStat.textContent='disconnected';"
+"    ws=null;"
+"  };"
 "};"
 "function fmt(d){"
 "  var lines=[];"
@@ -127,6 +203,8 @@ static const char ADMIN_HTML[] =
 "  if(d.wifi.connected)row('RSSI',d.wifi.rssi_dbm+' dBm',d.wifi.rssi_dbm>-70?'ok':'warn');"
 "  row('Camera FPS',d.camera.fps_1s,d.camera.fps_1s>=10?'ok':'warn');"
 "  row('Cam frames / drops',d.camera.frame_count+' / '+d.camera.drop_count,d.camera.drop_count>0?'warn':'ok');"
+"  if(d.vision)row('Motion FPS/score',d.vision.motion_fps_1s+' / '+(d.vision.motion_score||0).toFixed(3),"
+"      d.vision.motion_detected?'alarm':'ok');"
 "  row('Stream clients',d.stream.client_count);"
 "  if(d.cpu){row('CPU Core0/1',d.cpu.core0_pct+'% / '+d.cpu.core1_pct+'%',d.cpu.core0_pct<80&&d.cpu.core1_pct<80?'ok':'warn');}"
 "  row('Heap free',Math.round(d.memory.heap_free_b/1024)+'KB');"
@@ -179,8 +257,26 @@ static esp_err_t admin_get_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, private");
-    httpd_resp_sendstr(req, ADMIN_HTML);
-    return ESP_OK;
+
+    /* Send response in three chunks:
+     *   1. Static HEAD (up to and including <script>)
+     *   2. Dynamic WS token injection
+     *   3. Static BODY (JS IIFE + closing tags)
+     * Chunked transfer takes care of itself via httpd_resp_send_chunk. */
+    const char *tok = web_auth_get_session_token();
+    char inject[96];
+    int n = snprintf(inject, sizeof(inject),
+                     "window.WS_TOKEN='%s';", tok);
+
+    esp_err_t err;
+    err = httpd_resp_send_chunk(req, ADMIN_HTML_HEAD, sizeof(ADMIN_HTML_HEAD) - 1);
+    if (err != ESP_OK) return err;
+    err = httpd_resp_send_chunk(req, inject, n);
+    if (err != ESP_OK) return err;
+    err = httpd_resp_send_chunk(req, ADMIN_HTML_BODY, sizeof(ADMIN_HTML_BODY) - 1);
+    if (err != ESP_OK) return err;
+    /* Terminate the chunked response. */
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t logout_get_handler(httpd_req_t *req)
@@ -214,5 +310,5 @@ void admin_panel_register(httpd_handle_t server)
     httpd_register_uri_handler(server, &s_root_uri);
     httpd_register_uri_handler(server, &s_index_uri);
     httpd_register_uri_handler(server, &s_logout_uri);
-    ESP_LOGI(TAG, "Admin panel registered at '/' (lazy stream, session cookie).");
+    ESP_LOGI(TAG, "Admin panel registered at '/' (WebSocket stream, motion overlay).");
 }
