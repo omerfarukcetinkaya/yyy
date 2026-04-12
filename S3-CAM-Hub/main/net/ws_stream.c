@@ -198,7 +198,11 @@ static void ws_sender_task(void *pv)
 
     if (motion_json) free(motion_json);
 
-    /* Trigger httpd to close & clean up the WS session. */
+    /* CRITICAL: unsubscribe BEFORE deleting the task. If we don't,
+     * frame_pool_publish keeps calling xTaskNotifyGive on a freed TCB
+     * → use-after-free → task watchdog crash. */
+    frame_pool_unsubscribe(NULL);
+
     httpd_sess_trigger_close(args.server, args.fd);
     clients_release_slot(args.slot_index);
 

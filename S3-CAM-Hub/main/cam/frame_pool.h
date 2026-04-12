@@ -115,6 +115,14 @@ frame_slot_t *frame_pool_wait_newer(uint32_t last_seq, uint32_t timeout_ms);
 void frame_pool_release(frame_slot_t *slot);
 
 /**
+ * @brief Remove a task from the subscriber list.
+ * Must be called before the subscribed task is deleted (vTaskDelete) —
+ * otherwise xTaskNotifyGive will write to a freed TCB.
+ * Pass NULL to unsubscribe the current task.
+ */
+void frame_pool_unsubscribe(TaskHandle_t task);
+
+/**
  * @brief Debug / telemetry snapshot.
  */
 void frame_pool_get_stats(frame_pool_stats_t *out);

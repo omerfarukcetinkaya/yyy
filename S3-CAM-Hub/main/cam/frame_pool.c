@@ -88,6 +88,26 @@ esp_err_t frame_pool_subscribe(TaskHandle_t task)
     return ESP_OK;
 }
 
+void frame_pool_unsubscribe(TaskHandle_t task)
+{
+    if (!s_pool.initialized) return;
+    if (!task) task = xTaskGetCurrentTaskHandle();
+
+    xSemaphoreTake(s_pool.mutex, portMAX_DELAY);
+    for (uint32_t i = 0; i < s_pool.sub_count; i++) {
+        if (s_pool.subs[i] == task) {
+            /* Compact: move last entry into this slot. */
+            s_pool.subs[i] = s_pool.subs[s_pool.sub_count - 1];
+            s_pool.subs[s_pool.sub_count - 1] = NULL;
+            s_pool.sub_count--;
+            break;
+        }
+    }
+    xSemaphoreGive(s_pool.mutex);
+    ESP_LOGI(TAG, "Subscriber removed (%s) — total %lu",
+             pcTaskGetName(task), (unsigned long)s_pool.sub_count);
+}
+
 frame_slot_t *frame_pool_acquire_writable(void)
 {
     if (!s_pool.initialized) return NULL;

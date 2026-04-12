@@ -15,6 +15,7 @@ idf_component_register(
         # Vision layer
         "vision/motion_detect.c"
         "vision/blob_finder.c"
+        "vision/jpeg_dc.c"
         "vision/roi_tracker.c"
         "vision/classifier.c"
 

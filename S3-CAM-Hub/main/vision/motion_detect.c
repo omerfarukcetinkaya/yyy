@@ -7,23 +7,22 @@
  *   diff → dilate → CC labeling → blob merge → track update → publish
  *
  * Buffers (allocated once):
- *   rgb565       80×60×2 = 9.6 KB   DRAM (decoder output — hot)
- *   curr_gray    80×60   = 4.8 KB   DRAM
+ *   dc_gray      80×60   = 4.8 KB   DRAM (DC-coefficient luma output)
  *   prev_gray    80×60   = 4.8 KB   DRAM
  *   mask         80×60   = 4.8 KB   PSRAM (sequential access)
  *   dilate_tmp   80×60   = 4.8 KB   PSRAM (sequential access)
  *   labels       80×60×2 = 9.6 KB   PSRAM
  *   tracks[6]    ~320 B            BSS
- * Total ~38 KB.
+ * Total ~29 KB.
  */
 #include "motion_detect.h"
 #include "blob_finder.h"
+#include "jpeg_dc.h"
 #include "frame_pool.h"
 #include "cam_config.h"
 #include "alarm_engine.h"
 #include "telemetry_report.h"
 #include "watchdog.h"
-#include "img_converters.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
@@ -53,14 +52,17 @@ static const char *TAG = "motion";
 /* Tracker tuning — all in MASK coordinates unless noted. */
 #define MOTION_TRACK_MATCH_DIST_PX  12          /* cx/cy euclidean */
 #define MOTION_TRACK_CONFIRM_HITS   2           /* frames to become visible */
-#define MOTION_TRACK_HOLD_MISSES    10          /* sticky hold after last match */
+#define MOTION_TRACK_HOLD_MISSES    5           /* sticky hold (~1.4s at 3.5 fps) */
 #define MOTION_TRACK_SMOOTH_ALPHA   0.45f       /* new-sample weight */
 
 /* Motion task config */
 #define MOTION_TASK_STACK           6144
 #define MOTION_TASK_PRIO            4
 #define MOTION_TASK_CORE            1
-#define FRAME_STRIDE                6           /* ~28 fps cam → ~4.6 fps motion */
+/* With DC-coefficient extraction (~5 ms) instead of full decode (~200 ms),
+ * motion can now run much faster. STRIDE=4 → ~7 fps motion, plenty of
+ * headroom for future vision tasks on Core 1. */
+#define FRAME_STRIDE                4
 
 #define FPS_RING_SIZE               32u
 
@@ -81,9 +83,8 @@ typedef struct {
 /* ── State ────────────────────────────────────────────────────────────── */
 
 static struct {
+    uint8_t  *dc_gray;      /* jpeg_extract_dc_luma writes directly here */
     uint8_t  *prev_gray;
-    uint8_t  *curr_gray;
-    uint8_t  *rgb565;
     uint8_t  *mask;
     uint8_t  *dilate_tmp;
     uint16_t *labels;
@@ -99,23 +100,6 @@ static struct {
 static bool s_initialized = false;
 
 /* ── Image helpers ─────────────────────────────────────────────────────── */
-
-static inline void rgb565_to_gray(const uint8_t *rgb565, uint8_t *gray, uint32_t n_pixels)
-{
-    /* esp_jpeg_decode with swap_color_bytes=0 writes [LO, HI] where
-     * color = (R&0xF8)<<8 | (G&0xFC)<<3 | (B>>3).
-     *   LO = [G4 G3 G2 | B7 B6 B5 B4 B3]
-     *   HI = [R7 R6 R5 R4 R3 | G7 G6 G5]
-     * Y = (77*R + 150*G + 29*B) >> 8. */
-    for (uint32_t i = 0; i < n_pixels; i++) {
-        uint8_t lo = rgb565[i * 2 + 0];
-        uint8_t hi = rgb565[i * 2 + 1];
-        uint32_t r  = (hi & 0xF8);
-        uint32_t g  = ((hi & 0x07) << 5) | ((lo & 0xE0) >> 3);
-        uint32_t bl = (lo & 0x1F) << 3;
-        gray[i] = (uint8_t)((77u * r + 150u * g + 29u * bl) >> 8);
-    }
-}
 
 static inline uint32_t build_diff_mask(const uint8_t *a, const uint8_t *b,
                                        uint8_t *out, uint32_t n, uint8_t thresh)
@@ -398,28 +382,41 @@ static void motion_task(void *arg)
 
         int64_t t0 = esp_timer_get_time();
 
-        bool ok = jpg2rgb565(slot->buf, slot->len, s_mo.rgb565, JPG_SCALE_8X);
+        /* Extract 80×60 DC luminance directly from the JPEG bitstream.
+         * Skips IDCT, color conversion, and all AC coefficients — ~3-8 ms
+         * vs ~200 ms for a full tjpgd decode. */
+        jpeg_dc_result_t dc_result = {
+            .dc_y = s_mo.dc_gray,
+            .dc_w = 0,
+            .dc_h = 0,
+        };
+        esp_err_t dc_err = jpeg_extract_dc_luma(slot->buf, slot->len, &dc_result);
         uint16_t src_w = (uint16_t)slot->width;
         uint16_t src_h = (uint16_t)slot->height;
         int64_t  ts_us = slot->ts_us;
         frame_pool_release(slot);
 
-        if (!ok) {
-            ESP_LOGW(TAG, "jpg2rgb565 failed (seq=%lu)", (unsigned long)last_seq);
+        if (dc_err != ESP_OK || dc_result.dc_w == 0) {
+            ESP_LOGW(TAG, "DC extract failed (seq=%lu err=%d)",
+                     (unsigned long)last_seq, (int)dc_err);
             watchdog_reset();
             continue;
         }
 
         int64_t t_decode = esp_timer_get_time();
 
-        rgb565_to_gray(s_mo.rgb565, s_mo.curr_gray, MOTION_MASK_PIX);
+        /* dc_gray already contains 0..255 luminance — skip RGB conversion.
+         * Ensure mask dimensions match (dc_w should == MOTION_MASK_W). */
+        uint16_t eff_w = (dc_result.dc_w < MOTION_MASK_W) ? dc_result.dc_w : MOTION_MASK_W;
+        uint16_t eff_h = (dc_result.dc_h < MOTION_MASK_H) ? dc_result.dc_h : MOTION_MASK_H;
+        uint32_t eff_pix = (uint32_t)eff_w * eff_h;
 
         uint32_t fg_px = 0;
         blob_result_t blobs = {0};
 
         if (s_mo.have_prev) {
-            fg_px = build_diff_mask(s_mo.curr_gray, s_mo.prev_gray,
-                                    s_mo.mask, MOTION_MASK_PIX,
+            fg_px = build_diff_mask(s_mo.dc_gray, s_mo.prev_gray,
+                                    s_mo.mask, eff_pix,
                                     MOTION_DIFF_THRESHOLD);
 
             if (fg_px > 0) {
@@ -427,13 +424,13 @@ static void motion_task(void *arg)
                 dilate_cross_max(s_mo.mask, s_mo.dilate_tmp,
                                  MOTION_MASK_W, MOTION_MASK_H);
                 blob_finder_run(s_mo.dilate_tmp,
-                                MOTION_MASK_W, MOTION_MASK_H,
+                                eff_w, eff_h,
                                 MOTION_MIN_BLOB_AREA, s_mo.labels, &blobs);
                 /* Merge blobs whose bboxes are close (iterative). */
                 merge_close_blobs(&blobs, MOTION_MERGE_MARGIN_PX);
             }
         }
-        memcpy(s_mo.prev_gray, s_mo.curr_gray, MOTION_MASK_PIX);
+        memcpy(s_mo.prev_gray, s_mo.dc_gray, eff_pix);
         s_mo.have_prev = true;
 
         /* ── Tracker update ────────────────────────────────────────── */
@@ -500,10 +497,8 @@ esp_err_t motion_detect_init(void)
     memset(&s_mo, 0, sizeof(s_mo));
     s_mo.next_track_id = 1;
 
-    /* Hot buffers: DRAM for decoder output + gray planes. */
-    s_mo.rgb565     = (uint8_t *)heap_caps_malloc(MOTION_MASK_PIX * 2,
-                                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    s_mo.curr_gray  = (uint8_t *)heap_caps_malloc(MOTION_MASK_PIX,
+    /* DC-coefficient extractor writes directly into dc_gray (DRAM). */
+    s_mo.dc_gray    = (uint8_t *)heap_caps_malloc(MOTION_MASK_PIX,
                                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     s_mo.prev_gray  = (uint8_t *)heap_caps_malloc(MOTION_MASK_PIX,
                                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -514,7 +509,7 @@ esp_err_t motion_detect_init(void)
     s_mo.labels     = (uint16_t *)heap_caps_malloc(MOTION_MASK_PIX * sizeof(uint16_t),
                                                    MALLOC_CAP_SPIRAM);
 
-    if (!s_mo.rgb565 || !s_mo.curr_gray || !s_mo.prev_gray ||
+    if (!s_mo.dc_gray || !s_mo.prev_gray ||
         !s_mo.mask || !s_mo.dilate_tmp || !s_mo.labels) {
         ESP_LOGE(TAG, "motion buffer alloc failed");
         return ESP_ERR_NO_MEM;

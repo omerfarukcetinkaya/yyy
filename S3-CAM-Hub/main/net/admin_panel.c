@@ -252,31 +252,35 @@ static esp_err_t admin_get_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    /* Set/refresh session cookie so browser doesn't re-prompt next time */
     web_auth_set_session_cookie(req);
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, private");
 
-    /* Send response in three chunks:
-     *   1. Static HEAD (up to and including <script>)
-     *   2. Dynamic WS token injection
-     *   3. Static BODY (JS IIFE + closing tags)
-     * Chunked transfer takes care of itself via httpd_resp_send_chunk. */
+    /* Build the full HTML in one buffer so the response is a single
+     * Content-Length HTTP response — avoids chunked Transfer-Encoding
+     * which some mobile browsers handle poorly for text/html. */
     const char *tok = web_auth_get_session_token();
+    size_t head_len = sizeof(ADMIN_HTML_HEAD) - 1;
+    size_t body_len = sizeof(ADMIN_HTML_BODY) - 1;
     char inject[96];
-    int n = snprintf(inject, sizeof(inject),
-                     "window.WS_TOKEN='%s';", tok);
+    int inj_len = snprintf(inject, sizeof(inject),
+                           "window.WS_TOKEN='%s';", tok);
+    size_t total = head_len + (size_t)inj_len + body_len;
 
-    esp_err_t err;
-    err = httpd_resp_send_chunk(req, ADMIN_HTML_HEAD, sizeof(ADMIN_HTML_HEAD) - 1);
-    if (err != ESP_OK) return err;
-    err = httpd_resp_send_chunk(req, inject, n);
-    if (err != ESP_OK) return err;
-    err = httpd_resp_send_chunk(req, ADMIN_HTML_BODY, sizeof(ADMIN_HTML_BODY) - 1);
-    if (err != ESP_OK) return err;
-    /* Terminate the chunked response. */
-    return httpd_resp_send_chunk(req, NULL, 0);
+    char *buf = (char *)malloc(total + 1);
+    if (!buf) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    memcpy(buf, ADMIN_HTML_HEAD, head_len);
+    memcpy(buf + head_len, inject, (size_t)inj_len);
+    memcpy(buf + head_len + (size_t)inj_len, ADMIN_HTML_BODY, body_len);
+    buf[total] = '\0';
+
+    esp_err_t err = httpd_resp_send(req, buf, (ssize_t)total);
+    free(buf);
+    return err;
 }
 
 static esp_err_t logout_get_handler(httpd_req_t *req)

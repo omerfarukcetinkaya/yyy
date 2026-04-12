@@ -152,10 +152,14 @@ esp_err_t cam_driver_init(void)
 
     ESP_LOGI(TAG, "Camera sensor detected: PID=0x%04x", sensor->id.PID);
 
-    /* OV3660-specific initial adjustments */
-    sensor->set_vflip(sensor, 1);        /* Vertical flip for typical board orientation */
-    sensor->set_brightness(sensor, 1);   /* Slight brightness boost */
-    sensor->set_saturation(sensor, -2);  /* Reduce saturation for cleaner image */
+    /* OV3660 ISP tuning — conservative settings that don't slow frame rate.
+     * AEC/AGC left at sensor defaults (they're already ON by OV3660 reset);
+     * explicit set_aec2/set_ae_level was extending exposure to ~100 ms in
+     * indoor light, dropping camera from 28 fps to 9 fps. */
+    sensor->set_vflip(sensor, 1);
+    sensor->set_brightness(sensor, 1);
+    sensor->set_contrast(sensor, 1);
+    sensor->set_saturation(sensor, -1);
 
     s_initialized = true;
     ESP_LOGI(TAG, "Camera ready. Format: JPEG, Frame size: %d, Quality: %d, FB count: %d",
