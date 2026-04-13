@@ -1,0 +1,22 @@
+# sdkconfig.defaults — ESP32-C5 Scout (network bridge)
+CONFIG_IDF_TARGET="esp32c5"
+
+# ── CPU ──────────────────────────────────────────────────────────────────
+CONFIG_FREERTOS_HZ=1000
+
+# ── WiFi ─────────────────────────────────────────────────────────────────
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+
+# ── Networking ───────────────────────────────────────────────────────────
+CONFIG_LWIP_MAX_SOCKETS=12
+
+# ── Watchdog ─────────────────────────────────────────────────────────────
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+
+# ── Logging ──────────────────────────────────────────────────────────────
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# ── NVS ──────────────────────────────────────────────────────────────────
+CONFIG_NVS_ASSERT_ERROR_CHECK=n

@@ -1,0 +1,20 @@
+# Build outputs (per-project)
+yy1/build/
+yy1/managed_components/
+yy1/logs/
+yy1/sdkconfig
+yy2/build/
+yy2/managed_components/
+yy2/logs/
+yy2/sdkconfig
+
+# Old project structure (removed)
+projects/
+
+# Temporary
+tmp/
+*.pyc
+__pycache__/
+.DS_Store
+*.swp
+*.swo

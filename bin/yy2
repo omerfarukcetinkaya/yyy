@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# bin/yy2 — Scout (ESP32-C5 network bridge) project CLI
+#
+# Usage:
+#   yy2 --start          Build, flash, and open serial monitor
+#   yy2 --build          Build only
+#   yy2 --flash          Flash only (no build, no monitor)
+#   yy2 --monitor        Open serial monitor only
+#   yy2 --clean          Clean build artifacts
+#   yy2 --port           Show detected serial port
+#   yy2 --help           Show this help
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="${REPO_ROOT}/yy2"
+BUILD_DIR="${PROJECT_DIR}/build"
+
+# ── Load shared scripts ────────────────────────────────────────────────────────
+source "${REPO_ROOT}/scripts/common/paths.sh"
+source "${REPO_ROOT}/scripts/common/log.sh"
+source "${REPO_ROOT}/scripts/common/usb.sh"
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+load_idf() {
+    source "${REPO_ROOT}/scripts/env/load_esp.sh"
+}
+
+detect_port() {
+    local port
+    port="$(usb_find_esp32 2>/dev/null || true)"
+    if [[ -z "${port}" ]]; then
+        log_warn "ESP32 port not found. Trying /dev/ttyACM0 as fallback."
+        port="/dev/ttyACM0"
+    fi
+    echo "${port}"
+}
+
+ensure_configured() {
+    if [[ ! -f "${BUILD_DIR}/build.ninja" ]]; then
+        log_step "CMake not run yet — configuring..."
+        cmake -S "${PROJECT_DIR}" -B "${BUILD_DIR}" -G Ninja 2>&1
+        log_ok "CMake configured."
+    fi
+}
+
+# ── Commands ───────────────────────────────────────────────────────────────────
+
+cmd_build() {
+    load_idf
+    log_step "Building s3_vision_hub..."
+    idf.py -C "${PROJECT_DIR}" build
+    log_ok "Build complete."
+}
+
+cmd_flash() {
+    local port; port="$(detect_port)"
+    log_step "Flashing to ${port}..."
+    # Use esptool directly (like flash.sh) to avoid idf.py Python env
+    # mismatch when multiple venvs exist (py3.10 vs py3.13).
+    local PYTHON="${IDF_PYTHON_ENV_PATH}/bin/python"
+    "${PYTHON}" -m esptool \
+        --chip esp32c5 -p "${port}" -b 460800 \
+        --before default_reset --after hard_reset \
+        write_flash --flash_mode dio --flash_size 4MB --flash_freq 80m \
+        0x0     "${BUILD_DIR}/bootloader/bootloader.bin" \
+        0x8000  "${BUILD_DIR}/partition_table/partition-table.bin" \
+        0x10000 "${BUILD_DIR}/scout.bin"
+    log_ok "Flash complete."
+}
+
+run_monitor() {
+    local port="${1}"
+    log_step "Monitor on ${port}  (Ctrl+] to exit)..."
+    # Use IDF_PYTHON_ENV_PATH's python directly to avoid env mismatch.
+    local PYTHON="${IDF_PYTHON_ENV_PATH}/bin/python"
+    "${PYTHON}" -m esp_idf_monitor \
+        --port "${port}" \
+        --baud 115200 \
+        --toolchain-prefix xtensa-esp32s3-elf- \
+        "${BUILD_DIR}/scout.elf"
+}
+
+cmd_monitor() {
+    local port; port="$(detect_port)"
+    run_monitor "${port}"
+}
+
+cmd_start() {
+    cmd_build
+    local port; port="$(detect_port)"
+    cmd_flash
+    run_monitor "${port}"
+}
+
+cmd_clean() {
+    log_step "Cleaning build artifacts..."
+    rm -rf "${BUILD_DIR}"
+    log_ok "Clean complete. Run 'yyy --build' to rebuild from scratch."
+}
+
+cmd_port() {
+    detect_port
+}
+
+cmd_help() {
+    cat <<EOF
+
+  yy2 — Scout (ESP32-C5 network bridge) CLI
+
+  Commands:
+    --start     Build, flash, and open serial monitor
+    --build     Build only
+    --flash     Flash only
+    --monitor   Open serial monitor
+    --clean     Remove build directory
+    --port      Show detected serial port
+    --help      Show this help
+
+EOF
+}
+
+# ── Dispatch ───────────────────────────────────────────────────────────────────
+
+case "${1:-}" in
+    --start)   cmd_start   ;;
+    --build)   cmd_build   ;;
+    --flash)   cmd_flash   ;;
+    --monitor) cmd_monitor ;;
+    --clean)   cmd_clean   ;;
+    --port)    cmd_port    ;;
+    --help|-h) cmd_help    ;;
+    "")
+        log_warn "No command given."
+        cmd_help
+        exit 1
+        ;;
+    *)
+        log_error "Unknown command: '${1}'"
+        cmd_help
+        exit 1
+        ;;
+esac

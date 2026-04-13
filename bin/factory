@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# bin/factory
+# Main entrypoint for the embedded software factory.
+#
+# Usage:
+#   factory <family> <action> <project> [options]
+#   factory detect
+#   factory doctor [family]
+#
+# Examples:
+#   factory esp32 build   projects/esp32/s3_vision_hub
+#   factory esp32 flash   projects/esp32/s3_vision_hub
+#   factory esp32 monitor projects/esp32/s3_vision_hub
+#   factory detect
+#   factory doctor esp32
+set -Eeuo pipefail
+
+FACTORY_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FACTORY_ROOT="$(cd "${FACTORY_BIN_DIR}/.." && pwd)"
+
+source "${FACTORY_ROOT}/scripts/common/log.sh"
+source "${FACTORY_ROOT}/scripts/common/paths.sh"
+
+# ── Usage ──────────────────────────────────────────────────────────────────────
+usage() {
+    cat >&2 <<EOF
+Usage:
+  factory <family> <action> <project_path> [extra args]
+  factory detect
+  factory doctor [family]
+
+Families:   esp32 | rp2040 | stm32
+Actions:    build | flash | monitor | flash_monitor | clean | size | menuconfig
+Specials:   detect  — scan connected USB/serial devices
+            doctor  — validate tool environment
+
+Examples:
+  factory esp32 build   projects/esp32/s3_vision_hub
+  factory esp32 flash   projects/esp32/s3_vision_hub
+  factory esp32 monitor projects/esp32/s3_vision_hub
+  factory detect
+  factory doctor esp32
+EOF
+    exit 1
+}
+
+[[ $# -lt 1 ]] && usage
+
+FAMILY_OR_CMD="${1}"
+shift
+
+# ── Special top-level commands ─────────────────────────────────────────────────
+case "${FAMILY_OR_CMD}" in
+    detect)
+        source "${FACTORY_ROOT}/scripts/common/detect_board.sh"
+        detect_board_report
+        exit 0
+        ;;
+    doctor)
+        exec "${FACTORY_ROOT}/scripts/doctor.sh" "${1:-}"
+        ;;
+esac
+
+# ── Family dispatch ────────────────────────────────────────────────────────────
+FAMILY="${FAMILY_OR_CMD}"
+ACTION="${1:?Action required. Run 'factory' with no args for usage.}"
+PROJECT_PATH_RAW="${2:?Project path required.}"
+shift 2
+
+# Resolve project path relative to factory root if not absolute
+if [[ "${PROJECT_PATH_RAW}" != /* ]]; then
+    PROJECT_DIR="${FACTORY_ROOT}/${PROJECT_PATH_RAW}"
+else
+    PROJECT_DIR="${PROJECT_PATH_RAW}"
+fi
+
+# Enforce project stays inside factory root
+case "${PROJECT_DIR}" in
+    "${FACTORY_ROOT}"/projects/*) ;;
+    *) die "Project '${PROJECT_DIR}' is outside the factory projects/ tree. Refusing." ;;
+esac
+
+case "${FAMILY}" in
+    esp32)
+        source "${FACTORY_ROOT}/scripts/targets/esp32.sh" "${ACTION}" "${PROJECT_DIR}" "$@"
+        ;;
+    rp2040)
+        source "${FACTORY_ROOT}/scripts/targets/rp2040.sh" "${ACTION}" "${PROJECT_DIR}" "$@"
+        ;;
+    stm32)
+        source "${FACTORY_ROOT}/scripts/targets/stm32.sh" "${ACTION}" "${PROJECT_DIR}" "$@"
+        ;;
+    *)
+        log_error "Unknown family '${FAMILY}'. Valid: esp32 | rp2040 | stm32"
+        usage
+        ;;
+esac

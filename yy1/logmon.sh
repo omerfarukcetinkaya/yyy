@@ -14,7 +14,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FACTORY_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+FACTORY_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOG_DIR="${SCRIPT_DIR}/logs"
 UART_LOG="${LOG_DIR}/uart.log"
 BUILD_LOG="${LOG_DIR}/build.log"
