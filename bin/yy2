@@ -60,7 +60,7 @@ ensure_configured() {
 
 cmd_build() {
     load_idf
-    log_step "Building s3_vision_hub..."
+    log_step "Building Scout (ESP32-C5)..."
     idf.py -C "${PROJECT_DIR}" build
     log_ok "Build complete."
 }
@@ -89,7 +89,7 @@ run_monitor() {
     "${PYTHON}" -m esp_idf_monitor \
         --port "${port}" \
         --baud 115200 \
-        --toolchain-prefix xtensa-esp32s3-elf- \
+        --toolchain-prefix riscv32-esp-elf- \
         "${BUILD_DIR}/scout.elf"
 }
 

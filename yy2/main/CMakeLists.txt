@@ -7,6 +7,7 @@ idf_component_register(
         "net/admin_panel.c"
         "system/watchdog.c"
         "system/status_reporter.c"
+        "system/rgb_led.c"
 
     INCLUDE_DIRS
         "."

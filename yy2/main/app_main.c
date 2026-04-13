@@ -26,6 +26,7 @@
 #include "net/espnow_bridge.h"
 #include "system/watchdog.h"
 #include "system/status_reporter.h"
+#include "system/rgb_led.h"
 
 static const char *TAG = "scout";
 
@@ -68,7 +69,10 @@ void app_main(void)
     ESP_ERROR_CHECK(status_reporter_init());
     ESP_ERROR_CHECK(status_reporter_start());
 
-    /* 8. Watchdog */
+    /* 8. RGB LED (off by default, red on alarm) */
+    rgb_led_init();  /* non-critical — continue if fails */
+
+    /* 9. Watchdog */
     ESP_ERROR_CHECK(watchdog_init());
 
     ESP_LOGI(TAG, "========================================");

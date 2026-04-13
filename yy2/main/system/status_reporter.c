@@ -10,6 +10,7 @@
 #include "net/telegram_client.h"
 #include "net/espnow_bridge.h"
 #include "system/watchdog.h"
+#include "system/rgb_led.h"
 #include "net/admin_panel.h"
 #include "sdkconfig.h"
 #include "esp_http_server.h"
@@ -81,21 +82,28 @@ static void reporter_task(void *arg)
     start_http_server();
 
     while (true) {
-        ESP_LOGI(TAG, "==== SCOUT STATUS ====");
-        ESP_LOGI(TAG, "WiFi: %s [%s] RSSI=%d IP=%s",
+        bool alarm = espnow_bridge_alarm_active();
+
+        /* RGB LED: red on alarm, off otherwise */
+        rgb_led_alarm(alarm);
+
+        ESP_LOGI(TAG, "======== SCOUT ========");
+        ESP_LOGI(TAG, "[WIFI] %s [%s] RSSI=%d IP=%s",
                  wifi_dual_is_connected() ? "UP" : "DOWN",
                  wifi_dual_is_on_5g() ? "5G" : "2.4G",
                  (int)wifi_dual_get_rssi(),
                  wifi_dual_get_ip());
-        ESP_LOGI(TAG, "S3: %s  Alarm: %s",
+        ESP_LOGI(TAG, "[S3]   %s  alarm=%s",
                  espnow_bridge_is_s3_online() ? "ONLINE" : "OFFLINE",
-                 espnow_bridge_alarm_active() ? espnow_bridge_alarm_reason() : "clear");
-        ESP_LOGI(TAG, "Telegram: muted=%s", telegram_is_muted() ? "yes" : "no");
-        ESP_LOGI(TAG, "Heap: %lu B free", (unsigned long)esp_get_free_heap_size());
-        ESP_LOGI(TAG, "======================");
+                 alarm ? espnow_bridge_alarm_reason() : "clear");
+        ESP_LOGI(TAG, "[TG]   muted=%s", telegram_is_muted() ? "yes" : "no");
+        ESP_LOGI(TAG, "[MEM]  heap=%lu B", (unsigned long)esp_get_free_heap_size());
+        ESP_LOGI(TAG, "[TIME] uptime=%lu s",
+                 (unsigned long)(esp_timer_get_time() / 1000000));
+        ESP_LOGI(TAG, "=======================");
 
         watchdog_reset();
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(2000));  /* 2s UART telemetry */
     }
 }
 
