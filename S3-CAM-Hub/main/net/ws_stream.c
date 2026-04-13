@@ -27,6 +27,7 @@
 #include "web_auth.h"
 #include "frame_pool.h"
 #include "motion_detect.h"
+#include "face_detect.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -172,9 +173,10 @@ static void ws_sender_task(void *pv)
 
         s_clients[args.slot_index].frames_sent++;
 
-        /* ── Motion JSON sidechannel (text frame) ────────────────────── */
+        /* ── Motion + Face JSON sidechannel (text frames) ──────────── */
         motion_tick++;
         if (motion_json && (motion_tick % WS_MOTION_EVERY_N == 0)) {
+            /* Motion data */
             size_t n = motion_detect_build_json(motion_json, WS_MOTION_JSON_BUFSZ);
             if (n > 0) {
                 httpd_ws_frame_t tf;
@@ -184,7 +186,23 @@ static void ws_sender_task(void *pv)
                 tf.len     = n;
                 err = httpd_ws_send_frame_async(args.server, args.fd, &tf);
                 if (err != ESP_OK) {
-                    ESP_LOGW(TAG, "sender[%d] text send failed: %s — exit",
+                    ESP_LOGW(TAG, "sender[%d] motion text send failed: %s — exit",
+                             args.slot_index, esp_err_to_name(err));
+                    terminate = true;
+                    break;
+                }
+            }
+            /* Face detection data */
+            n = face_detect_build_json(motion_json, WS_MOTION_JSON_BUFSZ);
+            if (n > 0) {
+                httpd_ws_frame_t tf;
+                memset(&tf, 0, sizeof(tf));
+                tf.type    = HTTPD_WS_TYPE_TEXT;
+                tf.payload = (uint8_t *)motion_json;
+                tf.len     = n;
+                err = httpd_ws_send_frame_async(args.server, args.fd, &tf);
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "sender[%d] face text send failed: %s — exit",
                              args.slot_index, esp_err_to_name(err));
                     terminate = true;
                     break;

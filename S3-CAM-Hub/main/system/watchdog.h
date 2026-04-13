@@ -11,6 +11,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Configure the TWDT. Call once from app_main() after scheduler start.
  * sdkconfig already enables TWDT; this sets per-task subscriptions.
@@ -34,3 +38,7 @@ void watchdog_reset(void);
  * Call before a task exits cleanly.
  */
 void watchdog_unsubscribe_current_task(void);
+
+#ifdef __cplusplus
+}
+#endif

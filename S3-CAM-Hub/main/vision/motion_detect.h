@@ -36,13 +36,19 @@
 
 #define MOTION_MAX_TRACKS    6u
 
+typedef enum {
+    TRACK_STATE_TRACKING  = 0,   /**< Actively matching blobs — green */
+    TRACK_STATE_ALERT     = 1,   /**< Sustained high-score motion — red, alarm */
+    TRACK_STATE_POSSIBLE  = 2,   /**< Motion stopped but threat not cleared — yellow */
+} motion_track_state_t;
+
 typedef struct {
     uint16_t id;              /**< Stable per-track identifier */
     uint16_t x, y, w, h;      /**< Bounding box in SOURCE frame coords */
     float    score;           /**< Smoothed intensity score [0..1] */
     uint32_t age_frames;      /**< Frames since first seen */
     uint32_t hit_count;       /**< Number of frames this track matched a blob */
-    bool     lost;            /**< True if this frame produced no match (held) */
+    motion_track_state_t state; /**< Visual/alarm state */
 } motion_track_out_t;
 
 typedef struct {

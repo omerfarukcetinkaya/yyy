@@ -52,7 +52,9 @@ static const char *TAG = "motion";
 /* Tracker tuning — all in MASK coordinates unless noted. */
 #define MOTION_TRACK_MATCH_DIST_PX  12          /* cx/cy euclidean */
 #define MOTION_TRACK_CONFIRM_HITS   2           /* frames to become visible */
-#define MOTION_TRACK_HOLD_MISSES    5           /* sticky hold (~1.4s at 3.5 fps) */
+#define MOTION_TRACK_ALERT_SUSTAIN  3           /* consecutive high-score frames → ALERT */
+#define MOTION_TRACK_ALERT_SCORE    0.02f       /* min score for alert escalation */
+#define MOTION_TRACK_POSSIBLE_HOLD  20          /* hold in POSSIBLE after last match (~5.7s @3.5fps) */
 #define MOTION_TRACK_SMOOTH_ALPHA   0.45f       /* new-sample weight */
 
 /* Motion task config */
@@ -69,15 +71,17 @@ static const char *TAG = "motion";
 /* ── Internal per-track state ─────────────────────────────────────────── */
 
 typedef struct {
-    bool     active;          /**< slot occupied */
-    uint16_t id;              /**< stable id (1..65535, wraps) */
-    float    cx, cy;          /**< smoothed center, mask coords */
-    float    w, h;            /**< smoothed size, mask coords */
-    float    score_smooth;    /**< smoothed intensity 0..1 */
-    uint32_t hits;            /**< total frames this track matched */
-    uint32_t misses;          /**< consecutive frames without match */
-    uint32_t age_frames;      /**< frames since birth */
-    bool     matched_now;     /**< matched a blob in the current frame */
+    bool     active;
+    uint16_t id;
+    float    cx, cy;
+    float    w, h;
+    float    score_smooth;
+    uint32_t hits;
+    uint32_t misses;
+    uint32_t age_frames;
+    uint32_t alert_frames;    /**< consecutive high-score frames (for alert escalation) */
+    bool     was_alert;       /**< true if track ever reached ALERT state */
+    bool     matched_now;
 } track_state_t;
 
 /* ── State ────────────────────────────────────────────────────────────── */
@@ -277,17 +281,34 @@ static void tracker_update(const blob_result_t *br)
         tr->hits         = 1;
         tr->misses       = 0;
         tr->age_frames   = 1;
+        tr->alert_frames = 0;
+        tr->was_alert    = false;
         tr->matched_now  = true;
     }
 
-    /* Advance unmatched active tracks: increment miss, retire if stale. */
+    /* Advance unmatched active tracks: enter POSSIBLE, retire after hold. */
     for (uint32_t t = 0; t < MOTION_MAX_TRACKS; t++) {
         track_state_t *tr = &s_mo.tracks[t];
         if (!tr->active || tr->matched_now) continue;
         tr->misses++;
         tr->age_frames++;
-        if (tr->misses > MOTION_TRACK_HOLD_MISSES) {
+        tr->alert_frames = 0;
+        if (tr->misses > MOTION_TRACK_POSSIBLE_HOLD) {
             tr->active = false;
+        }
+    }
+
+    /* Update alert escalation for matched tracks. */
+    for (uint32_t t = 0; t < MOTION_MAX_TRACKS; t++) {
+        track_state_t *tr = &s_mo.tracks[t];
+        if (!tr->active || !tr->matched_now) continue;
+        if (tr->score_smooth >= MOTION_TRACK_ALERT_SCORE) {
+            tr->alert_frames++;
+        } else {
+            tr->alert_frames = 0;
+        }
+        if (tr->alert_frames >= MOTION_TRACK_ALERT_SUSTAIN) {
+            tr->was_alert = true;
         }
     }
 }
@@ -329,7 +350,15 @@ static void tracker_publish(motion_result_t *out)
         o->score      = tr->score_smooth;
         o->age_frames = tr->age_frames;
         o->hit_count  = tr->hits;
-        o->lost       = (tr->misses > 0);
+        /* Three-level state: POSSIBLE if not matching, ALERT if sustained
+         * high-score or previously alerted, TRACKING otherwise. */
+        if (tr->misses > 0) {
+            o->state = TRACK_STATE_POSSIBLE;
+        } else if (tr->alert_frames >= MOTION_TRACK_ALERT_SUSTAIN || tr->was_alert) {
+            o->state = TRACK_STATE_ALERT;
+        } else {
+            o->state = TRACK_STATE_TRACKING;
+        }
         if (tr->score_smooth > max_score) max_score = tr->score_smooth;
         visible++;
     }
@@ -438,13 +467,14 @@ static void motion_task(void *arg)
         if (blobs.count > 0) {
             tracker_update(&blobs);
         } else {
-            /* No raw blobs this frame — just age existing tracks. */
+            /* No raw blobs — age all active tracks toward POSSIBLE/retire. */
             for (uint32_t t = 0; t < MOTION_MAX_TRACKS; t++) {
                 track_state_t *tr = &s_mo.tracks[t];
                 if (!tr->active) continue;
                 tr->misses++;
                 tr->age_frames++;
-                if (tr->misses > MOTION_TRACK_HOLD_MISSES) {
+                tr->alert_frames = 0;
+                if (tr->misses > MOTION_TRACK_POSSIBLE_HOLD) {
                     tr->active = false;
                 }
             }
@@ -562,11 +592,13 @@ size_t motion_detect_build_json(char *buf, size_t buflen)
         (unsigned)r.src_width, (unsigned)r.src_height);
     if (n < 0 || (size_t)n >= buflen) return 0;
 
+    static const char *state_str[] = {"tracking", "alert", "possible"};
     for (uint32_t i = 0; i < r.track_count; i++) {
         const motion_track_out_t *tr = &r.tracks[i];
+        const char *st = (tr->state <= 2) ? state_str[tr->state] : "?";
         int m = snprintf(buf + n, buflen - (size_t)n,
             "%s{\"id\":%u,\"x\":%u,\"y\":%u,\"w\":%u,\"h\":%u,"
-            "\"s\":%.3f,\"age\":%lu,\"hits\":%lu,\"lost\":%s}",
+            "\"s\":%.3f,\"age\":%lu,\"hits\":%lu,\"st\":\"%s\"}",
             (i == 0) ? "" : ",",
             (unsigned)tr->id,
             (unsigned)tr->x, (unsigned)tr->y,
@@ -574,7 +606,7 @@ size_t motion_detect_build_json(char *buf, size_t buflen)
             tr->score,
             (unsigned long)tr->age_frames,
             (unsigned long)tr->hit_count,
-            tr->lost ? "true" : "false");
+            st);
         if (m < 0 || (size_t)(n + m) >= buflen) return 0;
         n += m;
     }

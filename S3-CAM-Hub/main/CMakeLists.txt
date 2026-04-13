@@ -16,6 +16,7 @@ idf_component_register(
         "vision/motion_detect.c"
         "vision/blob_finder.c"
         "vision/jpeg_dc.c"
+        "vision/face_detect.cpp"
         "vision/roi_tracker.c"
         "vision/classifier.c"
 
@@ -77,6 +78,9 @@ idf_component_register(
         driver
         esp_timer
         esp32-camera
+        espressif__esp-dl
+        espressif__human_face_detect
+        espressif__human_face_recognition
         freertos
         log
         heap

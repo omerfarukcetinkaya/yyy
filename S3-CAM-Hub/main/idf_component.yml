@@ -6,5 +6,14 @@ dependencies:
   # ESP32 camera driver (OV3660, OV2640, etc.)
   espressif/esp32-camera:
     version: ">=2.0.11"
+  # Deep learning inference (ESP32-S3 SIMD optimized)
+  espressif/esp-dl:
+    version: ">=3.0.0"
+  # Pre-trained face detection model (MSR01 + MNP01 stages)
+  espressif/human_face_detect:
+    version: ">=0.4.0"
+  # Pre-trained face recognition model (112x112 embedding)
+  espressif/human_face_recognition:
+    version: ">=0.3.0"
   # Managed components from IDF registry
   idf: ">=5.0.0"

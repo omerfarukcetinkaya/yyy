@@ -43,6 +43,7 @@
 
 /* Vision */
 #include "vision/motion_detect.h"
+#include "vision/face_detect.h"
 #include "vision/roi_tracker.h"
 #include "vision/classifier.h"
 
@@ -188,6 +189,17 @@ void app_main(void)
     /* ── 10. Vision pipeline tasks (Core 1) ─────────────────────────────── */
     ESP_ERROR_CHECK(motion_detect_init());
     ESP_ERROR_CHECK(motion_detect_start());
+
+    /* Face detection + recognition (ESP-DL, Core 0 prio 3, ~1 fps).
+     * Runs on Core 0 to avoid saturating Core 1 (cam_task + motion).
+     * Uses SCALE_1_2 decode (320×240, ~50ms) instead of full VGA (~200ms). */
+    esp_err_t face_ret = face_detect_init();
+    if (face_ret == ESP_OK) {
+        ESP_ERROR_CHECK(face_detect_start());
+    } else {
+        ESP_LOGW(TAG, "Face detection init failed (%s). Vision pipeline continues without faces.",
+                 esp_err_to_name(face_ret));
+    }
 
     ESP_ERROR_CHECK(roi_tracker_init());
 

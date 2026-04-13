@@ -25,10 +25,19 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#ifndef __cplusplus
 #include <stdatomic.h>
+#else
+#include <atomic>
+using std::atomic_int;
+#endif
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* ── Slot sizing ─────────────────────────────────────────────────────────────
  * 4 slots × 160 KB = 640 KB PSRAM. One slot carried by producer as "latest",
@@ -126,3 +135,7 @@ void frame_pool_unsubscribe(TaskHandle_t task);
  * @brief Debug / telemetry snapshot.
  */
 void frame_pool_get_stats(frame_pool_stats_t *out);
+
+#ifdef __cplusplus
+}
+#endif

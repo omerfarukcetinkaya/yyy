@@ -1,9 +1,11 @@
 # Partition table for ESP32-S3 N16R8 (16 MB flash)
+# Face detection + recognition models use ~3 MB flash, so factory
+# partition is 8 MB to give comfortable headroom.
 # Name,     Type, SubType,  Offset,   Size,   Flags
 nvs,        data, nvs,      0x9000,   0x6000,
 phy_init,   data, phy,      0xf000,   0x1000,
-factory,    app,  factory,  0x10000,  0x400000,
-spiffs,     data, spiffs,   0x410000, 0x200000,
-ota_0,      app,  ota_0,    0x610000, 0x400000,
-ota_1,      app,  ota_1,    0xa10000, 0x400000,
-nvs_key,    data, nvs_keys, 0xe10000, 0x1000,
+factory,    app,  factory,  0x10000,  0x800000,
+spiffs,     data, spiffs,   0x810000, 0x100000,
+ota_0,      app,  ota_0,    0x910000, 0x300000,
+ota_1,      app,  ota_1,    0xC10000, 0x300000,
+nvs_key,    data, nvs_keys, 0xF10000, 0x1000,
