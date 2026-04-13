@@ -1,15 +1,36 @@
 # sdkconfig.defaults — ESP32-C5 Scout (network bridge)
 CONFIG_IDF_TARGET="esp32c5"
 
+# ── Flash / Partitions ───────────────────────────────────────────────────
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
 # ── CPU ──────────────────────────────────────────────────────────────────
 CONFIG_FREERTOS_HZ=1000
 
 # ── WiFi ─────────────────────────────────────────────────────────────────
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
 
 # ── Networking ───────────────────────────────────────────────────────────
 CONFIG_LWIP_MAX_SOCKETS=12
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
+CONFIG_LWIP_TCP_WND_DEFAULT=16384
+
+# ── HTTP Client (Telegram API) ──────────────────────────────────────────
+CONFIG_ESP_TLS_USING_MBEDTLS=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# ── HTTP Server (telemetry on 2.4G) ─────────────────────────────────────
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=512
+CONFIG_HTTPD_MAX_URI_LEN=256
+
+# ── SNTP ─────────────────────────────────────────────────────────────────
+CONFIG_LWIP_SNTP_MAX_SERVERS=2
 
 # ── Watchdog ─────────────────────────────────────────────────────────────
 CONFIG_ESP_TASK_WDT_EN=y
@@ -20,3 +41,27 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
 # ── NVS ──────────────────────────────────────────────────────────────────
 CONFIG_NVS_ASSERT_ERROR_CHECK=n
+
+# ── WiFi credentials ─────────────────────────────────────────────────────
+CONFIG_SCOUT_WIFI_24G_SSID="localhost-ofc-dev0"
+CONFIG_SCOUT_WIFI_24G_PASSWORD="1994Far.?!1994Far.?!"
+CONFIG_SCOUT_WIFI_5G_SSID="Pr.Kothsv."
+CONFIG_SCOUT_WIFI_5G_PASSWORD="ProfessorK!"
+
+# ── Telegram ─────────────────────────────────────────────────────────────
+CONFIG_SCOUT_TG_BOT_TOKEN="8162927459:AAFwcal9v645Xt8iwELQQXhv4tfZaXqfmWU"
+CONFIG_SCOUT_TG_GROUP_ID="-1003943316480"
+CONFIG_SCOUT_TG_THREAD_ID=2
+
+# ── S3 Vision Hub ────────────────────────────────────────────────────────
+CONFIG_SCOUT_S3_IP="192.168.39.157"
+CONFIG_SCOUT_S3_HTTP_PORT=80
+CONFIG_SCOUT_S3_USER="tenten"
+CONFIG_SCOUT_S3_PASS="1234"
+
+# ── Schedule ─────────────────────────────────────────────────────────────
+CONFIG_SCOUT_SCHEDULE_START_HOUR=9
+CONFIG_SCOUT_SCHEDULE_END_HOUR=19
+
+# ── Telemetry ────────────────────────────────────────────────────────────
+CONFIG_SCOUT_TELEMETRY_PORT=8080

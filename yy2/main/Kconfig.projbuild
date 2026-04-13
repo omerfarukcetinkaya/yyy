@@ -1,0 +1,63 @@
+menu "Scout Configuration"
+
+    menu "WiFi 2.4 GHz (IoT mesh)"
+        config SCOUT_WIFI_24G_SSID
+            string "2.4 GHz SSID"
+            default "localhost-ofc-dev0"
+        config SCOUT_WIFI_24G_PASSWORD
+            string "2.4 GHz Password"
+            default "1994Far.?!1994Far.?!"
+    endmenu
+
+    menu "WiFi 5 GHz (Internet)"
+        config SCOUT_WIFI_5G_SSID
+            string "5 GHz SSID"
+            default "Pr.Kothsv."
+        config SCOUT_WIFI_5G_PASSWORD
+            string "5 GHz Password"
+            default "ProfessorK!"
+    endmenu
+
+    menu "Telegram"
+        config SCOUT_TG_BOT_TOKEN
+            string "Bot Token"
+            default "8162927459:AAFwcal9v645Xt8iwELQQXhv4tfZaXqfmWU"
+        config SCOUT_TG_GROUP_ID
+            string "Group Chat ID (yyy group)"
+            default "-1003943316480"
+        config SCOUT_TG_THREAD_ID
+            int "SecBridge Thread ID"
+            default 2
+    endmenu
+
+    menu "S3 Vision Hub (yy1)"
+        config SCOUT_S3_IP
+            string "S3 IP address on 2.4G network"
+            default "192.168.39.157"
+        config SCOUT_S3_HTTP_PORT
+            int "S3 HTTP port"
+            default 80
+        config SCOUT_S3_USER
+            string "S3 admin username"
+            default "tenten"
+        config SCOUT_S3_PASS
+            string "S3 admin password"
+            default "1234"
+    endmenu
+
+    menu "Schedule"
+        config SCOUT_SCHEDULE_START_HOUR
+            int "Active schedule start (hour, 24h)"
+            default 9
+        config SCOUT_SCHEDULE_END_HOUR
+            int "Active schedule end (hour, 24h)"
+            default 19
+    endmenu
+
+    menu "Telemetry"
+        config SCOUT_TELEMETRY_PORT
+            int "Telemetry HTTP server port (on 2.4G)"
+            default 8080
+    endmenu
+
+endmenu

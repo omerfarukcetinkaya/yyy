@@ -4,6 +4,7 @@ idf_component_register(
         "net/wifi_dual.c"
         "net/telegram_client.c"
         "net/espnow_bridge.c"
+        "net/admin_panel.c"
         "system/watchdog.c"
         "system/status_reporter.c"
 
@@ -17,8 +18,10 @@ idf_component_register(
         esp_event
         esp_netif
         esp_http_client
+        esp_http_server
         nvs_flash
         esp_timer
         freertos
         log
+        mbedtls
 )

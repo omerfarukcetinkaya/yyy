@@ -27,11 +27,23 @@ load_idf() {
 }
 
 detect_port() {
-    local port
-    port="$(usb_find_esp32 2>/dev/null || true)"
+    # C5 is the SECOND Espressif device (MAC D0:CF:13:EB:E5:A0)
+    # S3 is on ttyACM0, C5 on ttyACM1 (by plug order)
+    local port=""
+    local c5_id
+    c5_id=$(ls /dev/serial/by-id/ 2>/dev/null \
+            | grep "D0_CF_13_EB_E5_A0\|D0:CF:13:EB:E5:A0" | head -1)
+    if [[ -n "${c5_id}" ]]; then
+        port=$(readlink -f "/dev/serial/by-id/${c5_id}" 2>/dev/null)
+    fi
     if [[ -z "${port}" ]]; then
-        log_warn "ESP32 port not found. Trying /dev/ttyACM0 as fallback."
-        port="/dev/ttyACM0"
+        # Fallback: second ACM device
+        if [[ -c /dev/ttyACM1 ]]; then
+            port="/dev/ttyACM1"
+        else
+            log_warn "C5 not found. Trying /dev/ttyACM1 as fallback."
+            port="/dev/ttyACM1"
+        fi
     fi
     echo "${port}"
 }
@@ -61,9 +73,9 @@ cmd_flash() {
     local PYTHON="${IDF_PYTHON_ENV_PATH}/bin/python"
     "${PYTHON}" -m esptool \
         --chip esp32c5 -p "${port}" -b 460800 \
-        --before default_reset --after hard_reset \
+        --before default_reset --after hard_reset --no-stub \
         write_flash --flash_mode dio --flash_size 4MB --flash_freq 80m \
-        0x0     "${BUILD_DIR}/bootloader/bootloader.bin" \
+        0x2000  "${BUILD_DIR}/bootloader/bootloader.bin" \
         0x8000  "${BUILD_DIR}/partition_table/partition-table.bin" \
         0x10000 "${BUILD_DIR}/scout.bin"
     log_ok "Flash complete."
