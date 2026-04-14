@@ -77,7 +77,15 @@ static void start_http_server(void)
 static void reporter_task(void *arg)
 {
     ESP_LOGI(TAG, "Status reporter started.");
-    vTaskDelay(pdMS_TO_TICKS(5000));
+
+    /* Wait for WiFi on 2.4G before starting HTTP server.
+     * Starting it mid band-switch causes it to bind to the wrong netif
+     * and become unreachable from 2.4G clients. */
+    for (int i = 0; i < 60; i++) {
+        if (wifi_dual_is_connected() && !wifi_dual_is_on_5g()) break;
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000)); /* extra settle */
 
     start_http_server();
 
