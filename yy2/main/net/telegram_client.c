@@ -38,7 +38,7 @@ static const char *TAG = "telegram";
 #define GROUP_ID        CONFIG_SCOUT_TG_GROUP_ID
 #define THREAD_ID_STR   "2"     /* SecBridge topic */
 
-#define POLL_INTERVAL_MS    10000   /* check state every 10s, only poll when on 5G */
+#define POLL_INTERVAL_MS    3000    /* aggressive: 3s, captures 6+ polls per 20s 5G window */
 #define SEND_TIMEOUT_MS     15000
 #define MAX_MSG_LEN         2048
 #define MAX_RESPONSE_BUF    4096
@@ -151,9 +151,10 @@ esp_err_t telegram_send_alert(const char *message)
 static void process_command(const char *text)
 {
     if (!text) return;
-    ESP_LOGI(TAG, "Command received: %s", text);
+    ESP_LOGI(TAG, "process_command: '%s'", text);
 
     if (strstr(text, "/mute") || strstr(text, "alarm sustur")) {
+        ESP_LOGI(TAG, "match: mute");
         s_tg.muted = true;
         telegram_send("🔇 Alarmlar susturuldu. Yarın sabah otomatik açılacak.");
     }
@@ -238,6 +239,8 @@ static void poll_updates(void)
         return;
     }
 
+    ESP_LOGI(TAG, "poll_updates: on 5G, querying offset=%d", s_tg.last_update_id + 1);
+
     char url[256];
     snprintf(url, sizeof(url), "%s?offset=%d&timeout=3&allowed_updates=[\"message\"]",
              TG_UPDATES_URL, s_tg.last_update_id + 1);
@@ -255,7 +258,11 @@ static void poll_updates(void)
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     s_tg.response_len = 0;
     esp_err_t err = esp_http_client_perform(client);
+    int http_status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
+
+    ESP_LOGI(TAG, "poll_updates: http=%d err=%s resp_len=%d",
+             http_status, esp_err_to_name(err), s_tg.response_len);
 
     if (err != ESP_OK || s_tg.response_len == 0) return;
     s_tg.response_buf[s_tg.response_len] = '\0';
@@ -273,11 +280,17 @@ static void poll_updates(void)
         /* Check if message is in our thread */
         char thread_str[16] = {0};
         if (json_get_string(p, "message_thread_id", thread_str, sizeof(thread_str))) {
-            if (atoi(thread_str) == CONFIG_SCOUT_TG_THREAD_ID) {
+            int thread_id = atoi(thread_str);
+            if (thread_id == CONFIG_SCOUT_TG_THREAD_ID) {
                 char text[256] = {0};
                 if (json_get_string(p, "text", text, sizeof(text))) {
+                    ESP_LOGI(TAG, "poll_updates: update_id=%d thread=%d text='%s'",
+                             uid, thread_id, text);
                     process_command(text);
                 }
+            } else {
+                ESP_LOGD(TAG, "poll_updates: update_id=%d ignored (thread=%d, want %d)",
+                         uid, thread_id, CONFIG_SCOUT_TG_THREAD_ID);
             }
         }
         p++; /* advance past current match */

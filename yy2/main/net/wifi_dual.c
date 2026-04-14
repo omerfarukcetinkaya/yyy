@@ -11,6 +11,7 @@
  * hold until task completes, then resume alternation.
  */
 #include "wifi_dual.h"
+#include "status_reporter.h"
 #include "sdkconfig.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -30,8 +31,8 @@ static const char *TAG = "wifi_dual";
  * Cycle: 270s on 2.4G → switch to 5G → 30s on 5G → back to 2.4G.
  * During 5G window: Telegram polls, SNTP syncs, alerts send.
  * During 2.4G window: S3 telemetry polling, admin panel served. */
-#define STAY_24G_MS     270000  /* 4.5 min on 2.4G */
-#define STAY_5G_MS       30000  /* 30s on 5G */
+#define STAY_24G_MS     300000  /* 5 min on 2.4G — admin panel primary window */
+#define STAY_5G_MS       20000  /* 20s on 5G — aggressive Telegram poll burst */
 
 typedef enum {
     BAND_24G = 0,
@@ -76,6 +77,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
                  s_wifi.current_band == BAND_5G ? "5G" : "2.4G", s_wifi.ip);
         s_wifi.got_first_ip = true;
         xEventGroupSetBits(s_wifi.events, WIFI_CONNECTED_BIT);
+        /* On every 2.4G IP acquisition, (re)start the admin HTTP server.
+         * Idempotent — no-op if already running. This keeps the server
+         * bound to the latest netif after band switch flaps. */
+        if (s_wifi.current_band == BAND_24G) {
+            status_reporter_ensure_http_server();
+        }
     }
 }
 

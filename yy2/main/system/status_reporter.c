@@ -53,7 +53,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static void start_http_server(void)
+void status_reporter_ensure_http_server(void)
 {
     if (s_server) return;
 
@@ -79,16 +79,9 @@ static void reporter_task(void *arg)
 {
     ESP_LOGI(TAG, "Status reporter started.");
 
-    /* Wait for WiFi on 2.4G before starting HTTP server.
-     * Starting it mid band-switch causes it to bind to the wrong netif
-     * and become unreachable from 2.4G clients. */
-    for (int i = 0; i < 60; i++) {
-        if (wifi_dual_is_connected() && !wifi_dual_is_on_5g()) break;
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-    vTaskDelay(pdMS_TO_TICKS(1000)); /* extra settle */
-
-    start_http_server();
+    /* HTTP server is now started from wifi_dual's got_ip handler on
+     * every 2.4G IP acquisition (idempotent). This ensures the binding
+     * stays fresh across band switches. */
 
     while (true) {
         bool alarm = espnow_bridge_alarm_active();

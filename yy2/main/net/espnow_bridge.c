@@ -66,6 +66,7 @@ static struct {
     uint32_t bist_min_cam_fps;
     uint32_t bist_max_cam_fps;
     int64_t  bist_last_report_us;
+    uint32_t heartbeat_seq;         /* 1, 2, 3, ... each BIST */
 } s_bridge;
 
 /* ── Simple JSON value extractor ────────────────────────────────────────── */
@@ -141,92 +142,58 @@ static void parse_s3_telemetry(const char *json, s3_snapshot_t *snap)
 static void send_bist_report(void)
 {
     s3_snapshot_t *s = &s_bridge.last_snap;
-    char buf1[1600], buf2[1200];
+    char buf[1400];
 
-    /* Message 1: Heartbeat + Scout status */
     time_t now;
     time(&now);
     struct tm ti;
     localtime_r(&now, &ti);
 
-    snprintf(buf1, sizeof(buf1),
-        "💓 <b>Scout Heartbeat</b> %02d:%02d:%02d\\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━\\n"
-        "\\n"
-        "🛡 <b>Scout C5 Status</b>\\n"
-        "├ WiFi: %s [%s] RSSI %d dBm\\n"
-        "├ Uptime: %lu s\\n"
-        "├ Heap free: %lu B\\n"
-        "├ S3 polls OK/FAIL: %lu/%lu\\n"
-        "├ Telegram: %s\\n"
-        "└ Alarms relayed: %lu\\n"
-        "\\n"
-        "📹 <b>S3 Vision Hub</b>\\n"
-        "├ Status: %s\\n"
-        "├ S3 Uptime: %lu s\\n"
-        "├ Camera: %lu fps (%lu frames, %lu drops)\\n"
-        "├ FPS range: %lu–%lu (15min)\\n"
-        "├ Motion: %lu fps (detected=%s score=%.3f)\\n"
-        "├ Motion events (15min): %lu (max score: %.3f)\\n"
-        "├ Stream clients: %lu\\n"
-        "├ CPU: Core0=%u%% Core1=%u%%\\n"
-        "├ Heap: %lu KB free\\n"
-        "├ PSRAM: %lu KB free\\n"
-        "└ WiFi RSSI: %d dBm",
+    /* Increment heartbeat sequence — distinguishes from boot message. */
+    s_bridge.heartbeat_seq++;
+
+    /* Single concise heartbeat message with 15-min deltas */
+    snprintf(buf, sizeof(buf),
+        "💓 <b>Heartbeat #%lu</b> · %02d:%02d:%02d · up %lus\\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\\n"
+        "%s Scout %s · RSSI %d · heap %luKB\\n"
+        "%s S3 %s · cam %lufps · motion %lufps (%.2f)\\n"
+        "📊 15-min: polls %lu/%lu · alarms %lu · motion %lu events\\n"
+        "🎥 FPS range %lu-%lu · max motion %.2f\\n"
+        "%s Mute: %s · Schedule %02d-%02d\\n"
+        "%s",
+        (unsigned long)s_bridge.heartbeat_seq,
         ti.tm_hour, ti.tm_min, ti.tm_sec,
-        wifi_dual_is_connected() ? "UP" : "DOWN",
+        (unsigned long)(esp_timer_get_time() / 1000000),
+        wifi_dual_is_connected() ? "🟢" : "🔴",
         wifi_dual_is_on_5g() ? "5G" : "2.4G",
         (int)wifi_dual_get_rssi(),
-        (unsigned long)(esp_timer_get_time() / 1000000),
-        (unsigned long)esp_get_free_heap_size(),
+        (unsigned long)(esp_get_free_heap_size() / 1024),
+        s_bridge.s3_online ? "🟢" : "🔴",
+        s_bridge.s3_online ? "ONLINE" : "OFFLINE",
+        (unsigned long)s->cam_fps,
+        (unsigned long)s->motion_fps,
+        s->motion_score,
         (unsigned long)s_bridge.bist_polls_ok,
         (unsigned long)s_bridge.bist_polls_fail,
-        telegram_is_muted() ? "MUTED 🔇" : "Active 🔊",
         (unsigned long)s_bridge.bist_alarm_count,
-        s_bridge.s3_online ? "🟢 ONLINE" : "🔴 OFFLINE",
-        (unsigned long)s->uptime_s,
-        (unsigned long)s->cam_fps,
-        (unsigned long)s->cam_frames,
-        (unsigned long)s->cam_drops,
+        (unsigned long)s_bridge.bist_motion_detects,
         (unsigned long)s_bridge.bist_min_cam_fps,
         (unsigned long)s_bridge.bist_max_cam_fps,
-        (unsigned long)s->motion_fps,
-        s->motion_detected ? "YES" : "no",
-        s->motion_score,
-        (unsigned long)s_bridge.bist_motion_detects,
         s_bridge.bist_max_motion_score,
-        (unsigned long)s->stream_clients,
-        (unsigned)s->cpu_core0, (unsigned)s->cpu_core1,
-        (unsigned long)(s->heap_free / 1024),
-        (unsigned long)(s->psram_free / 1024),
-        (int)s->wifi_rssi);
+        telegram_is_muted() ? "🔇" : "🔊",
+        telegram_is_muted() ? "ON" : "off",
+        CONFIG_SCOUT_SCHEDULE_START_HOUR,
+        CONFIG_SCOUT_SCHEDULE_END_HOUR,
+        s->alarm_active ? "\\n⚠️ <b>ALARM ACTIVE</b>: " : "");
 
-    /* Message 2: Alarm summary */
-    snprintf(buf2, sizeof(buf2),
-        "🚨 <b>Alarm Status</b>\\n"
-        "├ Current: %s\\n"
-        "├ Reason: %s\\n"
-        "├ Triggers (15min): %lu\\n"
-        "└ Mute: %s\\n"
-        "\\n"
-        "📊 <b>15-min Summary</b>\\n"
-        "├ Polls: %lu OK / %lu failed\\n"
-        "├ S3 availability: %s\\n"
-        "├ Motion events: %lu\\n"
-        "└ Next report in 15 min",
-        s->alarm_active ? "⚠️ ACTIVE" : "✅ Clear",
-        s->alarm_active ? s->alarm_reason : "—",
-        (unsigned long)s_bridge.bist_alarm_count,
-        telegram_is_muted() ? "ON (susturulmuş)" : "OFF (aktif)",
-        (unsigned long)s_bridge.bist_polls_ok,
-        (unsigned long)s_bridge.bist_polls_fail,
-        (s_bridge.bist_polls_ok > 0) ? "OK" : "UNREACHABLE",
-        (unsigned long)s_bridge.bist_motion_detects);
+    /* If alarm active, append reason on the last line. */
+    if (s->alarm_active) {
+        size_t plen = strlen(buf);
+        snprintf(buf + plen, sizeof(buf) - plen, "%s", s->alarm_reason);
+    }
 
-    /* Send both messages */
-    telegram_send(buf1);
-    vTaskDelay(pdMS_TO_TICKS(1000));  /* avoid rate limit */
-    telegram_send(buf2);
+    telegram_send(buf);
 
     ESP_LOGI(TAG, "BIST report sent (polls=%lu/%lu alarms=%lu motions=%lu)",
              (unsigned long)s_bridge.bist_polls_ok,
