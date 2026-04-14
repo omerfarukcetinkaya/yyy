@@ -60,6 +60,7 @@ static void start_http_server(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = CONFIG_SCOUT_TELEMETRY_PORT;
     cfg.max_open_sockets = 4;
+    cfg.stack_size = 8192;  /* default 4KB overflows with large admin HTML buffer */
 
     if (httpd_start(&s_server, &cfg) == ESP_OK) {
         httpd_uri_t uri = {

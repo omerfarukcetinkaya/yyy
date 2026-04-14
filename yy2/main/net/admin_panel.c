@@ -16,6 +16,7 @@
 #include "esp_timer.h"
 #include "mbedtls/base64.h"
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 static const char *TAG = "scout_admin";
@@ -85,14 +86,19 @@ static esp_err_t admin_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    char buf[2048];
+    /* Heap-alloc 2KB buffer — httpd task stack is 8KB, keep it out of stack */
+    char *buf = malloc(2048);
+    if (!buf) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
     int n = 0;
-    n += snprintf(buf + n, sizeof(buf) - n, "%s", SCOUT_HTML);
+    n += snprintf(buf + n, 2048 - n, "%s", SCOUT_HTML);
 
     /* WiFi card */
     bool conn = wifi_dual_is_connected();
     bool on5g = wifi_dual_is_on_5g();
-    n += snprintf(buf + n, sizeof(buf) - n,
+    n += snprintf(buf + n, 2048 - n,
         "<div class=card><h2>WIFI</h2>"
         "<div class=row><span class=lbl>Status</span><span class='%s'>%s</span></div>"
         "<div class=row><span class=lbl>Band</span><span class=val>%s</span></div>"
@@ -106,7 +112,7 @@ static esp_err_t admin_handler(httpd_req_t *req)
     /* S3 card */
     bool s3_on = espnow_bridge_is_s3_online();
     bool alarm = espnow_bridge_alarm_active();
-    n += snprintf(buf + n, sizeof(buf) - n,
+    n += snprintf(buf + n, 2048 - n,
         "<div class=card><h2>S3 VISION HUB</h2>"
         "<div class=row><span class=lbl>Status</span><span class='%s'>%s</span></div>"
         "<div class=row><span class=lbl>Alarm</span><span class='%s'>%s</span></div>"
@@ -116,7 +122,7 @@ static esp_err_t admin_handler(httpd_req_t *req)
         alarm ? espnow_bridge_alarm_reason() : "Clear");
 
     /* Telegram card */
-    n += snprintf(buf + n, sizeof(buf) - n,
+    n += snprintf(buf + n, 2048 - n,
         "<div class=card><h2>TELEGRAM</h2>"
         "<div class=row><span class=lbl>Muted</span><span class='%s'>%s</span></div>"
         "<div class=row><span class=lbl>Schedule</span><span class=val>%02d:00 - %02d:00</span></div>"
@@ -126,7 +132,7 @@ static esp_err_t admin_handler(httpd_req_t *req)
         CONFIG_SCOUT_SCHEDULE_START_HOUR, CONFIG_SCOUT_SCHEDULE_END_HOUR);
 
     /* System card */
-    n += snprintf(buf + n, sizeof(buf) - n,
+    n += snprintf(buf + n, 2048 - n,
         "<div class=card><h2>SYSTEM</h2>"
         "<div class=row><span class=lbl>Uptime</span><span class=val>%lu s</span></div>"
         "<div class=row><span class=lbl>Heap Free</span><span class=val>%lu B</span></div>"
@@ -134,14 +140,15 @@ static esp_err_t admin_handler(httpd_req_t *req)
         (unsigned long)(esp_timer_get_time() / 1000000),
         (unsigned long)esp_get_free_heap_size());
 
-    n += snprintf(buf + n, sizeof(buf) - n,
+    n += snprintf(buf + n, 2048 - n,
         "<p style='color:#546e7a;font-size:0.6em;margin-top:12px'>Auto-refresh 5s</p>"
         "</body></html>");
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    httpd_resp_send(req, buf, n);
-    return ESP_OK;
+    esp_err_t err = httpd_resp_send(req, buf, n);
+    free(buf);
+    return err;
 }
 
 static const httpd_uri_t s_root = {
