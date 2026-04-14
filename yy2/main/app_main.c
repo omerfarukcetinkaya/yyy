@@ -87,6 +87,31 @@ void app_main(void)
              CONFIG_SCOUT_TELEMETRY_PORT);
     ESP_LOGI(TAG, "========================================");
 
-    /* Send online notification to Telegram */
-    telegram_send("🟢 <b>Scout Online</b>\\nESP32-C5 bridge başlatıldı.");
+    /* Boot notification task — needs 8KB stack (telegram_send uses large buffers) */
+    extern void boot_notify_task(void *arg);
+    xTaskCreate(boot_notify_task, "boot_notify", 8192, NULL, 2, NULL);
+}
+
+#include <stdio.h>
+
+void boot_notify_task(void *arg)
+{
+    /* Wait up to 20s for first IP on 2.4G */
+    for (int i = 0; i < 40; i++) {
+        if (wifi_dual_got_first_ip() && !wifi_dual_is_on_5g()) break;
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+        "🟢 <b>Scout Online</b>\\n"
+        "ESP32-C5 bridge başlatıldı.\\n"
+        "\\n"
+        "🌐 <b>Local IP</b>: <code>%s</code>\\n"
+        "📡 Admin panel: http://%s:%d/\\n"
+        "🔑 User: %s / %s",
+        wifi_dual_get_ip(), wifi_dual_get_ip(),
+        CONFIG_SCOUT_TELEMETRY_PORT,
+        CONFIG_SCOUT_S3_USER, CONFIG_SCOUT_S3_PASS);
+    telegram_send(msg);
+    vTaskDelete(NULL);
 }

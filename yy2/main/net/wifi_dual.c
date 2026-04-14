@@ -46,7 +46,10 @@ static struct {
     bool                task_lock;       /* true = a task is holding the band */
     char                ip[16];
     int8_t              rssi;
+    bool                got_first_ip;    /* true after first DHCP */
 } s_wifi;
+
+bool wifi_dual_got_first_ip(void) { return s_wifi.got_first_ip; }
 
 /* ── Event handler ─────────────────────────────────────────────────────── */
 
@@ -55,12 +58,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
 {
     if (base == WIFI_EVENT) {
         if (id == WIFI_EVENT_STA_START) {
-            esp_wifi_connect();
+            /* Don't auto-connect here — connect_to_band() handles it */
+            ESP_LOGI(TAG, "STA started.");
         } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
             s_wifi.connected = false;
-            ESP_LOGW(TAG, "Disconnected from %s band. Reconnecting...",
+            ESP_LOGW(TAG, "Disconnected from %s band.",
                      s_wifi.current_band == BAND_5G ? "5G" : "2.4G");
-            esp_wifi_connect();
+            /* Signal disconnect so connect_to_band can unblock */
+            xEventGroupSetBits(s_wifi.events, WIFI_FAIL_BIT);
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
@@ -69,6 +74,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         s_wifi.connected = true;
         ESP_LOGI(TAG, "Connected [%s] IP: %s",
                  s_wifi.current_band == BAND_5G ? "5G" : "2.4G", s_wifi.ip);
+        s_wifi.got_first_ip = true;
         xEventGroupSetBits(s_wifi.events, WIFI_CONNECTED_BIT);
     }
 }
@@ -77,7 +83,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
 
 static esp_err_t connect_to_band(band_t band)
 {
-    esp_wifi_disconnect();
+    /* Disconnect cleanly and wait for DISCONNECTED event before reconfiguring */
+    if (s_wifi.connected) {
+        esp_wifi_disconnect();
+        /* Brief wait for disconnect event to process */
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
     xEventGroupClearBits(s_wifi.events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
     s_wifi.connected = false;
 
@@ -99,7 +111,16 @@ static esp_err_t connect_to_band(band_t band)
              band == BAND_5G ? CONFIG_SCOUT_WIFI_5G_SSID : CONFIG_SCOUT_WIFI_24G_SSID);
 
     s_wifi.current_band = band;
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "set_config failed: %s — retrying after 500ms", esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(500));
+        err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "set_config retry failed: %s", esp_err_to_name(err));
+            return err;
+        }
+    }
     esp_wifi_connect();
 
     /* Wait up to 15s for connection */
