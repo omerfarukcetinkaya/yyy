@@ -20,6 +20,7 @@ idf_component_register(
         esp_netif
         esp_http_client
         esp_http_server
+        esp-tls
         nvs_flash
         esp_timer
         freertos

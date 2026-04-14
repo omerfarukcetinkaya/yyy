@@ -143,21 +143,28 @@ static void band_switch_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(5000)); /* let system settle */
 
     while (true) {
-        /* Stay on 2.4G (admin panel + S3 polling) */
-        if (s_wifi.current_band != BAND_24G && !s_wifi.task_lock) {
-            connect_to_band(BAND_24G);
-        }
-        /* Wait on 2.4G for STAY_24G_MS, checking task_lock periodically */
-        for (int t = 0; t < (int)(STAY_24G_MS / 1000); t++) {
+        /* ── 2.4G phase: actively enforce 2.4G for STAY_24G_MS ─────── */
+        int64_t phase_start = esp_timer_get_time();
+        while ((esp_timer_get_time() - phase_start) < (int64_t)STAY_24G_MS * 1000LL) {
+            if (s_wifi.task_lock) {
+                /* A task temporarily needs a specific band — yield. */
+                vTaskDelay(pdMS_TO_TICKS(500));
+                continue;
+            }
+            /* If something moved us off 2.4G while unlocked, pull back. */
+            if (s_wifi.current_band != BAND_24G) {
+                ESP_LOGI(TAG, "Band-switch: reclaiming 2.4G");
+                connect_to_band(BAND_24G);
+            }
             vTaskDelay(pdMS_TO_TICKS(1000));
-            if (s_wifi.task_lock) break;  /* a task needs a specific band */
         }
 
-        /* Brief 5G window (Telegram, SNTP, alerts) */
-        if (!s_wifi.task_lock) {
+        /* ── 5G phase: briefly visit 5G for Telegram poll / NTP ────── */
+        if (!s_wifi.task_lock && s_wifi.current_band != BAND_5G) {
+            ESP_LOGI(TAG, "Band-switch: scheduled 5G window");
             connect_to_band(BAND_5G);
-            vTaskDelay(pdMS_TO_TICKS(STAY_5G_MS));
         }
+        vTaskDelay(pdMS_TO_TICKS(STAY_5G_MS));
     }
 }
 

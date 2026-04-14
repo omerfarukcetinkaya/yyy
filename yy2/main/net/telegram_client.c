@@ -19,6 +19,7 @@
 #include "wifi_dual.h"
 #include "sdkconfig.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -37,7 +38,7 @@ static const char *TAG = "telegram";
 #define GROUP_ID        CONFIG_SCOUT_TG_GROUP_ID
 #define THREAD_ID_STR   "2"     /* SecBridge topic */
 
-#define POLL_INTERVAL_MS    5000
+#define POLL_INTERVAL_MS    10000   /* check state every 10s, only poll when on 5G */
 #define SEND_TIMEOUT_MS     15000
 #define MAX_MSG_LEN         2048
 #define MAX_RESPONSE_BUF    4096
@@ -96,6 +97,8 @@ esp_err_t telegram_send(const char *text)
         .event_handler = http_event_handler,
         .timeout_ms = SEND_TIMEOUT_MS,
         .buffer_size = 1024,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
@@ -228,8 +231,12 @@ static bool json_get_string(const char *json, const char *key, char *out, int ma
 
 static void poll_updates(void)
 {
-    wifi_dual_switch_to_5g();
-    vTaskDelay(pdMS_TO_TICKS(300));
+    /* Only poll when we happen to be on 5G during band_switch's 5G window.
+     * Do NOT force-switch — that fights the band_switch task and keeps
+     * Scout stuck on 5G, breaking 2.4G admin panel and S3 polling. */
+    if (!wifi_dual_is_on_5g() || !wifi_dual_is_connected()) {
+        return;
+    }
 
     char url[256];
     snprintf(url, sizeof(url), "%s?offset=%d&timeout=3&allowed_updates=[\"message\"]",
@@ -241,13 +248,14 @@ static void poll_updates(void)
         .event_handler = http_event_handler,
         .timeout_ms = 10000,
         .buffer_size = 2048,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     s_tg.response_len = 0;
     esp_err_t err = esp_http_client_perform(client);
     esp_http_client_cleanup(client);
-    wifi_dual_release_lock();
 
     if (err != ESP_OK || s_tg.response_len == 0) return;
     s_tg.response_buf[s_tg.response_len] = '\0';
