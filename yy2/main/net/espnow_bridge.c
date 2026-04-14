@@ -12,14 +12,17 @@
 #include "espnow_bridge.h"
 #include "telegram_client.h"
 #include "wifi_dual.h"
+#include "sensor_registry.h"
 #include "sdkconfig.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static const char *TAG = "espnow_brg";
 
@@ -141,57 +144,82 @@ static void parse_s3_telemetry(const char *json, s3_snapshot_t *snap)
 
 static void send_bist_report(void)
 {
-    s3_snapshot_t *s = &s_bridge.last_snap;
-    char buf[1400];
+    char buf[2600];
 
     time_t now;
     time(&now);
     struct tm ti;
     localtime_r(&now, &ti);
 
-    /* Increment heartbeat sequence — distinguishes from boot message. */
     s_bridge.heartbeat_seq++;
 
-    /* Single concise heartbeat message with 15-min deltas */
-    snprintf(buf, sizeof(buf),
+    int total = sensor_registry_count();
+    int online = sensor_registry_online_count();
+
+    /* Header */
+    int n = snprintf(buf, sizeof(buf),
         "💓 <b>Heartbeat #%lu</b> · %02d:%02d:%02d · up %lus\\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\\n"
-        "%s Scout %s · RSSI %d · heap %luKB\\n"
-        "%s S3 %s · cam %lufps · motion %lufps (%.2f)\\n"
-        "📊 15-min: polls %lu/%lu · alarms %lu · motion %lu events\\n"
-        "🎥 FPS range %lu-%lu · max motion %.2f\\n"
-        "%s Mute: %s · Schedule %02d-%02d\\n"
-        "%s",
+        "🛡 Scout %s · RSSI %d · heap %luKB\\n"
+        "🌐 Sensör Ağı: <b>%d/%d online</b>\\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\\n",
         (unsigned long)s_bridge.heartbeat_seq,
         ti.tm_hour, ti.tm_min, ti.tm_sec,
         (unsigned long)(esp_timer_get_time() / 1000000),
-        wifi_dual_is_connected() ? "🟢" : "🔴",
         wifi_dual_is_on_5g() ? "5G" : "2.4G",
         (int)wifi_dual_get_rssi(),
         (unsigned long)(esp_get_free_heap_size() / 1024),
-        s_bridge.s3_online ? "🟢" : "🔴",
-        s_bridge.s3_online ? "ONLINE" : "OFFLINE",
-        (unsigned long)s->cam_fps,
-        (unsigned long)s->motion_fps,
-        s->motion_score,
-        (unsigned long)s_bridge.bist_polls_ok,
-        (unsigned long)s_bridge.bist_polls_fail,
+        online, total);
+    if (n < 0 || (size_t)n >= sizeof(buf)) { telegram_send(buf); return; }
+
+    /* Per-sensor block */
+    for (int i = 0; i < total && (size_t)n < sizeof(buf) - 200; i++) {
+        const sensor_t *sen = sensor_registry_get(i);
+        if (!sen) continue;
+        char line[SENSOR_SUMMARY_MAX];
+        sensor_registry_format_line(i, line, sizeof(line));
+        int m = snprintf(buf + n, sizeof(buf) - n,
+            "<b>[%d]</b> %s\\n", i, line);
+        if (m < 0 || (size_t)(n + m) >= sizeof(buf)) break;
+        n += m;
+
+        if (sen->online) {
+            m = snprintf(buf + n, sizeof(buf) - n,
+                "    polls %lu/%lu · heap %luKB",
+                (unsigned long)sen->poll_ok,
+                (unsigned long)sen->poll_fail,
+                (unsigned long)(sen->heap_free_b / 1024));
+            if (m > 0 && (size_t)(n + m) < sizeof(buf)) n += m;
+
+            if (sen->cpu0_pct || sen->cpu1_pct) {
+                m = snprintf(buf + n, sizeof(buf) - n,
+                    " · CPU %u/%u%%", sen->cpu0_pct, sen->cpu1_pct);
+                if (m > 0 && (size_t)(n + m) < sizeof(buf)) n += m;
+            }
+            if (sen->alarm_active && sen->alarm_reason[0]) {
+                m = snprintf(buf + n, sizeof(buf) - n,
+                    "\\n    ⚠️ %s", sen->alarm_reason);
+                if (m > 0 && (size_t)(n + m) < sizeof(buf)) n += m;
+            }
+            if ((size_t)(n + 2) < sizeof(buf)) { buf[n++] = '\\'; buf[n++] = 'n'; }
+        }
+    }
+
+    /* Footer: 15-min aggregate + mute/schedule */
+    snprintf(buf + n, sizeof(buf) - n,
+        "━━━━━━━━━━━━━━━━━━━━━━━\\n"
+        "📊 15-min: alarms %lu · motion %lu events · max score %.2f\\n"
+        "🎥 cam fps range %lu-%lu\\n"
+        "%s Mute: %s · Schedule %02d-%02d",
         (unsigned long)s_bridge.bist_alarm_count,
         (unsigned long)s_bridge.bist_motion_detects,
+        s_bridge.bist_max_motion_score,
         (unsigned long)s_bridge.bist_min_cam_fps,
         (unsigned long)s_bridge.bist_max_cam_fps,
-        s_bridge.bist_max_motion_score,
         telegram_is_muted() ? "🔇" : "🔊",
         telegram_is_muted() ? "ON" : "off",
         CONFIG_SCOUT_SCHEDULE_START_HOUR,
-        CONFIG_SCOUT_SCHEDULE_END_HOUR,
-        s->alarm_active ? "\\n⚠️ <b>ALARM ACTIVE</b>: " : "");
-
-    /* If alarm active, append reason on the last line. */
-    if (s->alarm_active) {
-        size_t plen = strlen(buf);
-        snprintf(buf + plen, sizeof(buf) - plen, "%s", s->alarm_reason);
-    }
+        CONFIG_SCOUT_SCHEDULE_END_HOUR);
 
     telegram_send(buf);
 
@@ -306,19 +334,34 @@ static void poll_s3_telemetry(void)
 
 static void status_callback(char *buf, size_t buflen)
 {
-    snprintf(buf, buflen,
-        "📊 <b>SecBridge Status</b>\\n\\n"
-        "WiFi: %s (%s)\\n"
-        "RSSI: %d dBm\\n"
-        "S3 Vision Hub: %s\\n"
-        "Alarm: %s\\n"
-        "Muted: %s",
-        wifi_dual_is_connected() ? "Connected" : "Disconnected",
-        wifi_dual_is_on_5g() ? "5G Internet" : "2.4G IoT",
+    int total = sensor_registry_count();
+    int online = sensor_registry_online_count();
+
+    /* Header */
+    int n = snprintf(buf, buflen,
+        "📊 <b>SecBridge Status</b>\\n"
+        "Scout WiFi: %s [%s] RSSI %d dBm\\n"
+        "Uptime: %lus · heap %luKB\\n"
+        "Mute: %s · Schedule %02d-%02d\\n"
+        "\\n<b>Sensörler</b>: %d/%d online\\n",
+        wifi_dual_is_connected() ? "UP" : "DOWN",
+        wifi_dual_is_on_5g() ? "5G" : "2.4G",
         (int)wifi_dual_get_rssi(),
-        s_bridge.s3_online ? "ONLINE" : "OFFLINE",
-        s_bridge.alarm_active ? s_bridge.alarm_reason : "Clear",
-        telegram_is_muted() ? "Yes" : "No");
+        (unsigned long)(esp_timer_get_time() / 1000000),
+        (unsigned long)(esp_get_free_heap_size() / 1024),
+        telegram_is_muted() ? "🔇 ON" : "🔊 off",
+        CONFIG_SCOUT_SCHEDULE_START_HOUR,
+        CONFIG_SCOUT_SCHEDULE_END_HOUR,
+        online, total);
+    if (n < 0) { buf[0] = '\0'; return; }
+
+    for (int i = 0; i < total && (size_t)n < buflen - 120; i++) {
+        char line[SENSOR_SUMMARY_MAX];
+        sensor_registry_format_line(i, line, sizeof(line));
+        int m = snprintf(buf + n, buflen - n, "[%d] %s\\n", i, line);
+        if (m < 0 || (size_t)(n + m) >= buflen) break;
+        n += m;
+    }
 }
 
 static void telemetry_callback(char *buf, size_t buflen)
@@ -337,27 +380,41 @@ static void telemetry_callback(char *buf, size_t buflen)
 
 static void bridge_task(void *arg)
 {
-    ESP_LOGI(TAG, "Bridge task started — S3 poll every %ds, BIST every %d min.",
-             S3_POLL_INTERVAL_MS / 1000, BIST_INTERVAL_MS / 60000);
+    ESP_LOGI(TAG, "Bridge task started — BIST heartbeat every %d min.",
+             BIST_INTERVAL_MS / 60000);
     vTaskDelay(pdMS_TO_TICKS(8000));
 
     s_bridge.bist_last_report_us = esp_timer_get_time();
     s_bridge.bist_min_cam_fps = 999;
 
     while (true) {
-        /* Poll S3 when on 2.4G */
-        if (!wifi_dual_is_on_5g()) {
-            poll_s3_telemetry();
+        /* Aggregate BIST counters from sensor_registry */
+        for (int i = 0; i < sensor_registry_count(); i++) {
+            const sensor_t *sen = sensor_registry_get(i);
+            if (!sen || !sen->online) continue;
+            if (sen->motion_detected) {
+                s_bridge.bist_motion_detects++;
+                if (sen->motion_score > s_bridge.bist_max_motion_score)
+                    s_bridge.bist_max_motion_score = sen->motion_score;
+            }
+            if (sen->cam_fps > 0) {
+                if (sen->cam_fps < s_bridge.bist_min_cam_fps)
+                    s_bridge.bist_min_cam_fps = sen->cam_fps;
+                if (sen->cam_fps > s_bridge.bist_max_cam_fps)
+                    s_bridge.bist_max_cam_fps = sen->cam_fps;
+            }
+            if (sen->alarm_active) s_bridge.bist_alarm_count++;
         }
 
         /* 15-minute BIST heartbeat */
         int64_t now_us = esp_timer_get_time();
         if ((now_us - s_bridge.bist_last_report_us) >= (int64_t)BIST_INTERVAL_MS * 1000LL) {
-            ESP_LOGI(TAG, "BIST interval reached — sending report...");
+            ESP_LOGI(TAG, "BIST interval reached — sending heartbeat #%lu...",
+                     (unsigned long)s_bridge.heartbeat_seq + 1);
             send_bist_report();
         }
 
-        vTaskDelay(pdMS_TO_TICKS(S3_POLL_INTERVAL_MS));
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 
@@ -380,6 +437,17 @@ esp_err_t espnow_bridge_init(void)
     return ESP_OK;
 }
 
-bool espnow_bridge_is_s3_online(void) { return s_bridge.s3_online; }
-bool espnow_bridge_alarm_active(void) { return s_bridge.alarm_active; }
-const char *espnow_bridge_alarm_reason(void) { return s_bridge.alarm_reason; }
+bool espnow_bridge_is_s3_online(void)
+{
+    const sensor_t *s = sensor_registry_get(0);
+    return s ? s->online : false;
+}
+bool espnow_bridge_alarm_active(void)
+{
+    return sensor_registry_any_alarm();
+}
+const char *espnow_bridge_alarm_reason(void)
+{
+    const sensor_t *s = sensor_registry_first_alarm();
+    return s ? s->alarm_reason : "";
+}

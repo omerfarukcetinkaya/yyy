@@ -8,6 +8,7 @@ idf_component_register(
         "system/watchdog.c"
         "system/status_reporter.c"
         "system/rgb_led.c"
+        "system/sensor_registry.c"
 
     INCLUDE_DIRS
         "."

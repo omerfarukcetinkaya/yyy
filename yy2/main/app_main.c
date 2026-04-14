@@ -27,6 +27,7 @@
 #include "system/watchdog.h"
 #include "system/status_reporter.h"
 #include "system/rgb_led.h"
+#include "system/sensor_registry.h"
 
 static const char *TAG = "scout";
 
@@ -62,7 +63,11 @@ void app_main(void)
     /* 5. Telegram client (polls commands, sends alerts) */
     ESP_ERROR_CHECK(telegram_client_init());
 
-    /* 6. ESP-NOW bridge (polls S3 telemetry on 2.4G, relays alarms) */
+    /* 6a. Sensor registry — multi-sensor polling (S3 is sensor 0) */
+    ESP_ERROR_CHECK(sensor_registry_init());
+    ESP_ERROR_CHECK(sensor_registry_start());
+
+    /* 6b. ESP-NOW bridge (BIST heartbeat + alarm aggregation) */
     ESP_ERROR_CHECK(espnow_bridge_init());
 
     /* 7. Status reporter (HTTP telemetry server + UART log) */
