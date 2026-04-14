@@ -9,6 +9,7 @@ idf_component_register(
         "system/status_reporter.c"
         "system/rgb_led.c"
         "system/sensor_registry.c"
+        "system/scout_health.c"
 
     INCLUDE_DIRS
         "."

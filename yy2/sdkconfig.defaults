@@ -8,6 +8,9 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
 # ── CPU ──────────────────────────────────────────────────────────────────
 CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 
 # ── WiFi ─────────────────────────────────────────────────────────────────
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10

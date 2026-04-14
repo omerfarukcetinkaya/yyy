@@ -28,6 +28,7 @@
 #include "system/status_reporter.h"
 #include "system/rgb_led.h"
 #include "system/sensor_registry.h"
+#include "system/scout_health.h"
 
 static const char *TAG = "scout";
 
@@ -53,6 +54,11 @@ void app_main(void)
 
     /* 2. Event loop */
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    /* 2b. Scout self health (before WiFi so reset reason + reboot counter
+     * are loaded early from NVS and available for the first heartbeat). */
+    ESP_ERROR_CHECK(scout_health_init());
+    ESP_ERROR_CHECK(scout_health_start());
 
     /* 3. WiFi dual-band (starts on 2.4G, alternates with 5G) */
     ESP_ERROR_CHECK(wifi_dual_init());

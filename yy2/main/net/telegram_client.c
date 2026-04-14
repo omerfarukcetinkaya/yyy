@@ -22,6 +22,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "scout_health.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -114,8 +115,10 @@ esp_err_t telegram_send(const char *text)
 
     if (err != ESP_OK || status != 200) {
         ESP_LOGW(TAG, "Send failed: err=%s status=%d", esp_err_to_name(err), status);
+        scout_health_inc_tg_sent_fail();
     } else {
         ESP_LOGI(TAG, "Message sent to SecBridge (%d bytes)", n);
+        scout_health_inc_tg_sent_ok();
     }
 
     xSemaphoreGive(s_tg.send_mutex);
@@ -264,7 +267,11 @@ static void poll_updates(void)
     ESP_LOGI(TAG, "poll_updates: http=%d err=%s resp_len=%d",
              http_status, esp_err_to_name(err), s_tg.response_len);
 
-    if (err != ESP_OK || s_tg.response_len == 0) return;
+    if (err != ESP_OK || s_tg.response_len == 0) {
+        scout_health_inc_tg_poll_fail();
+        return;
+    }
+    scout_health_inc_tg_poll_ok();
     s_tg.response_buf[s_tg.response_len] = '\0';
 
     /* Parse updates — look for messages in our thread */
