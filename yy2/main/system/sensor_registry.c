@@ -37,6 +37,11 @@ static SemaphoreHandle_t s_mutex = NULL;
 
 /* Per-sensor previous alarm state for edge detection. */
 static bool s_prev_alarm[SENSOR_MAX];
+/* Per-sensor previous motion-detected state — C5 treats motion as an
+ * alert condition (S3's alarm_engine only fires on gas/temp, so motion
+ * detection never raises S3's alarm.active field). Scout is the network
+ * policy engine and decides what's worth notifying about. */
+static bool s_prev_motion[SENSOR_MAX];
 
 /* ── HTTP response buffer ─────────────────────────────────────────────── */
 static char s_http_buf[2560];
@@ -142,7 +147,7 @@ static void poll_one(int idx)
         s->cpu0_pct        = (uint8_t)json_int(s_http_buf, "core0_pct", 0);
         s->cpu1_pct        = (uint8_t)json_int(s_http_buf, "core1_pct", 0);
 
-        /* Alarm edge detection (transition off→on) */
+        /* Alarm edge detection (off→on) for S3's alarm field (gas/temp). */
         if (s->alarm_active && !s_prev_alarm[idx]) {
             char msg[256];
             snprintf(msg, sizeof(msg), "%s: %s",
@@ -151,6 +156,20 @@ static void poll_one(int idx)
             telegram_send_alert(msg);
         }
         s_prev_alarm[idx] = s->alarm_active;
+
+        /* Motion edge detection (off→on) — C5 policy: motion is an alert.
+         * Synthesize an alarm event when motion starts (with a reason). */
+        if (s->motion_detected && !s_prev_motion[idx]) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "%s: Motion detected (score %.2f, %lu fps)",
+                     s->name, s->motion_score, (unsigned long)s->motion_fps);
+            telegram_send_alert(msg);
+            /* Set alarm_reason so LED + admin panel reflect the motion. */
+            snprintf(s->alarm_reason, sizeof(s->alarm_reason),
+                     "Motion (%.2f)", s->motion_score);
+        }
+        s_prev_motion[idx] = s->motion_detected;
     } else {
         s->online = false;
         s->poll_fail++;
@@ -239,8 +258,13 @@ bool sensor_registry_any_alarm(void)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     bool any = false;
+    /* Alarm = hardware alarm (gas/temp) OR active motion detection.
+     * Scout's definition of "something worth alerting about". */
     for (int i = 0; i < s_sensor_count; i++) {
-        if (s_sensors[i].online && s_sensors[i].alarm_active) { any = true; break; }
+        if (s_sensors[i].online &&
+            (s_sensors[i].alarm_active || s_sensors[i].motion_detected)) {
+            any = true; break;
+        }
     }
     xSemaphoreGive(s_mutex);
     return any;
@@ -249,7 +273,10 @@ bool sensor_registry_any_alarm(void)
 const sensor_t *sensor_registry_first_alarm(void)
 {
     for (int i = 0; i < s_sensor_count; i++) {
-        if (s_sensors[i].online && s_sensors[i].alarm_active) return &s_sensors[i];
+        if (s_sensors[i].online &&
+            (s_sensors[i].alarm_active || s_sensors[i].motion_detected)) {
+            return &s_sensors[i];
+        }
     }
     return NULL;
 }

@@ -41,3 +41,13 @@ void scout_health_inc_tg_poll_ok(void);
 void scout_health_inc_tg_poll_fail(void);
 void scout_health_inc_tg_sent_ok(void);
 void scout_health_inc_tg_sent_fail(void);
+
+/**
+ * @brief Should we send a boot notification?
+ * Returns true if at least BOOT_NOTIFY_MIN_INTERVAL seconds have passed
+ * since the last one (tracked in NVS). Prevents boot-loop message spam.
+ */
+bool scout_health_should_send_boot_notification(void);
+
+/** Mark boot notification sent (updates NVS timestamp). */
+void scout_health_mark_boot_notification_sent(void);

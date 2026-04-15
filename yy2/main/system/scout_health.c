@@ -14,6 +14,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <string.h>
+#include <time.h>
 
 static const char *TAG = "scout_health";
 
@@ -168,4 +169,32 @@ void scout_health_inc_tg_sent_fail(void)
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_health.tg_sent_fail++;
     xSemaphoreGive(s_mutex);
+}
+
+#define BOOT_NOTIFY_MIN_INTERVAL_S   600   /* 10 minutes between boot msgs */
+
+bool scout_health_should_send_boot_notification(void)
+{
+    nvs_handle_t h;
+    if (nvs_open("scout", NVS_READONLY, &h) != ESP_OK) return true;
+    int64_t last = 0;
+    size_t sz = sizeof(last);
+    nvs_get_blob(h, "boot_ts", &last, &sz);
+    nvs_close(h);
+    /* last is unix epoch seconds; compare with time(NULL). If NTP hasn't
+     * synced yet, time(NULL) returns a small value (< 2020), in which case
+     * allow sending. Otherwise require min interval. */
+    time_t now = time(NULL);
+    if (now < 1600000000) return true;  /* before 2020 — time not synced */
+    return (now - last) >= BOOT_NOTIFY_MIN_INTERVAL_S;
+}
+
+void scout_health_mark_boot_notification_sent(void)
+{
+    nvs_handle_t h;
+    if (nvs_open("scout", NVS_READWRITE, &h) != ESP_OK) return;
+    int64_t now = (int64_t)time(NULL);
+    nvs_set_blob(h, "boot_ts", &now, sizeof(now));
+    nvs_commit(h);
+    nvs_close(h);
 }

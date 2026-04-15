@@ -14,6 +14,7 @@
  * /mute command: suppresses alarms until next schedule start.
  */
 #include <string.h>
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -112,17 +113,42 @@ void boot_notify_task(void *arg)
         if (wifi_dual_got_first_ip() && !wifi_dual_is_on_5g()) break;
         vTaskDelay(pdMS_TO_TICKS(500));
     }
-    char msg[256];
+
+    /* Wait for SNTP to sync (up to 20s) so we have a real timestamp.
+     * Also rate-limits boot spam: if this is the Nth boot within 10min,
+     * skip the notification to avoid flooding SecBridge during a crash
+     * loop. The local admin panel always shows live state. */
+    for (int i = 0; i < 40; i++) {
+        time_t t = time(NULL);
+        if (t > 1600000000) break;   /* NTP synced */
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    scout_health_t h;
+    scout_health_snapshot(&h);
+
+    if (!scout_health_should_send_boot_notification()) {
+        ESP_LOGW(TAG, "Boot notification suppressed (rate limit: <10min since last)");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    char msg[512];
     snprintf(msg, sizeof(msg),
-        "🟢 <b>Scout Online</b>\\n"
-        "ESP32-C5 bridge başlatıldı.\\n"
-        "\\n"
-        "🌐 <b>Local IP</b>: <code>%s</code>\\n"
-        "📡 Admin panel: http://%s:%d/\\n"
-        "🔑 User: %s / %s",
+        "🟢 <b>Scout Online</b> · reboot #%lu\\n"
+        "━━━━━━━━━━━━━━━━━━\\n"
+        "Reset reason: <b>%s</b>\\n"
+        "🌐 Local IP: <code>%s</code>\\n"
+        "📡 Admin: http://%s/\\n"
+        "🔑 %s / %s\\n"
+        "Schedule: %02d:00 – %02d:00 · BIST 15min",
+        (unsigned long)h.reboot_count,
+        h.reset_reason ? h.reset_reason : "unknown",
         wifi_dual_get_ip(), wifi_dual_get_ip(),
-        CONFIG_SCOUT_TELEMETRY_PORT,
-        CONFIG_SCOUT_S3_USER, CONFIG_SCOUT_S3_PASS);
+        CONFIG_SCOUT_S3_USER, CONFIG_SCOUT_S3_PASS,
+        CONFIG_SCOUT_SCHEDULE_START_HOUR,
+        CONFIG_SCOUT_SCHEDULE_END_HOUR);
     telegram_send(msg);
+    scout_health_mark_boot_notification_sent();
     vTaskDelete(NULL);
 }

@@ -22,6 +22,8 @@
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_system.h"
+#include "esp_idf_version.h"
 #include "scout_health.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -194,14 +196,44 @@ static void process_command(const char *text)
              strstr(text, "yardım") || strstr(text, "komutlar")) {
         telegram_send(
             "🛡 <b>SecBridge Komutları</b>\\n\\n"
-            "/status — Sistem durumu\\n"
-            "/mute — Alarmları sustur\\n"
+            "/status — Sistem + sensör durumu\\n"
+            "/mute — Alarmları sustur (ertesi sabaha kadar)\\n"
             "/unmute — Alarmları aç\\n"
             "/alarm — Test alarm\\n"
             "/camera — Kamera erişimi\\n"
             "/telemetry — Son 5 sağlık raporu\\n"
+            "/ip — Local IP + admin panel URL\\n"
+            "/reboot — Scout'u yeniden başlat\\n"
+            "/version — Firmware bilgisi\\n"
             "/help — Bu mesaj"
         );
+    }
+    else if (strstr(text, "/ip")) {
+        extern const char *wifi_dual_get_ip(void);
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "🌐 <b>Network</b>\\n"
+            "IP: <code>%s</code>\\n"
+            "Admin: http://%s/\\n"
+            "User: %s / %s",
+            wifi_dual_get_ip(), wifi_dual_get_ip(),
+            CONFIG_SCOUT_S3_USER, CONFIG_SCOUT_S3_PASS);
+        telegram_send(buf);
+    }
+    else if (strstr(text, "/version")) {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "📦 <b>Scout Firmware</b>\\n"
+            "Build: %s %s\\n"
+            "IDF: " IDF_VER "\\n"
+            "Chip: ESP32-C5",
+            __DATE__, __TIME__);
+        telegram_send(buf);
+    }
+    else if (strstr(text, "/reboot")) {
+        telegram_send("🔄 Scout yeniden başlatılıyor...");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_restart();
     }
 }
 

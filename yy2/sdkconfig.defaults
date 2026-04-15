@@ -38,6 +38,10 @@ CONFIG_LWIP_SNTP_MAX_SERVERS=2
 # ── Watchdog ─────────────────────────────────────────────────────────────
 CONFIG_ESP_TASK_WDT_EN=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+# Idle task watchdog OFF — single-core C5 may have brief idle starvation
+# during band switches / HTTP server spikes. Only the status_reporter task
+# is subscribed (explicit subscribe in watchdog_init).
+# CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0 is not set
 
 # ── Logging ──────────────────────────────────────────────────────────────
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y

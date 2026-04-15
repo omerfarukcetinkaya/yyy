@@ -83,6 +83,9 @@ static void reporter_task(void *arg)
      * every 2.4G IP acquisition (idempotent). This ensures the binding
      * stays fresh across band switches. */
 
+    /* Subscribe this task to the watchdog — resets every 2 seconds. */
+    watchdog_subscribe_current_task();
+
     while (true) {
         bool alarm = espnow_bridge_alarm_active();
 
