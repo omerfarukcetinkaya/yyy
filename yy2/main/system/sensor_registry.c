@@ -233,7 +233,9 @@ esp_err_t sensor_registry_init(void)
 esp_err_t sensor_registry_start(void)
 {
     if (!s_mutex) return ESP_ERR_INVALID_STATE;
-    BaseType_t r = xTaskCreate(registry_task, "sensor_reg", 6144, NULL, 3, NULL);
+    /* 12KB stack: HTTP client + mbedtls TLS context + JSON parse + edge
+     * detection logging. 6KB was overflowing (Stack protection fault). */
+    BaseType_t r = xTaskCreate(registry_task, "sensor_reg", 12288, NULL, 3, NULL);
     return (r == pdPASS) ? ESP_OK : ESP_FAIL;
 }
 

@@ -430,7 +430,7 @@ esp_err_t espnow_bridge_init(void)
     telegram_register_status_cb(status_callback);
     telegram_register_telemetry_cb(telemetry_callback);
 
-    xTaskCreate(bridge_task, "bridge", 6144, NULL, 3, NULL);
+    xTaskCreate(bridge_task, "bridge", 8192, NULL, 3, NULL);  /* 8K for BIST buf */
 
     ESP_LOGI(TAG, "ESP-NOW bridge initialized (S3 @ %s:%d)",
              CONFIG_SCOUT_S3_IP, CONFIG_SCOUT_S3_HTTP_PORT);
